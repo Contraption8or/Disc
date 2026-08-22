@@ -2,10 +2,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-panel-alt);
-  border: 1px solid var(--border-color);
+  background: transparent;
   border-radius: var(--radius-sm);
   padding: 6px 10px;
+  transition: background 0.12s ease;
+}
+
+.volume-control:hover {
+  background: var(--bg-hover);
 }
 
 .volume-control__icon {

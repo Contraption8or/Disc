@@ -112,7 +112,9 @@ function TrackRow({
   useEffect(() => {
     if (isMissing || isVideo || !waveformData) return;
     (trackSections[track.id] || []).forEach((section, i) =>
-      prepareSectionDrag(track, section, i)
+      prepareSectionDrag(track, section, i).catch((err) =>
+        console.error("Couldn't prepare section for drag:", err)
+      )
     );
   }, [waveformData, trackSections, track, isMissing, isVideo]);
 
@@ -191,7 +193,9 @@ function TrackRow({
   function handleWaveformMouseEnter() {
     if (isMissing || isVideo) return;
     (trackSections[track.id] || []).forEach((section, i) =>
-      prepareSectionDrag(track, section, i)
+      prepareSectionDrag(track, section, i).catch((err) =>
+        console.error("Couldn't prepare section for drag:", err)
+      )
     );
   }
 

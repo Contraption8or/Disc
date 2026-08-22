@@ -33,6 +33,7 @@ import { loadTrackNotes, saveTrackNotes } from "./notes/noteStorage.js";
 import { loadTrackOverrides, saveTrackOverrides } from "./audio/overrideStorage.js";
 import { loadTrackSections, saveTrackSections } from "./audio/sectionStorage.js";
 import { loadCollections, saveCollections } from "./collections/collectionStorage.js";
+import { toMediaUrl } from "./utils/paths.js";
 import { loadShortcuts, saveShortcuts, DEFAULT_SHORTCUTS } from "./shortcuts/shortcutStorage.js";
 import { preloadLibrary, getPreloadCandidates } from "./audio/preload.js";
 import {
@@ -50,16 +51,6 @@ const VOLUME_STORAGE_KEY = "disc.volume";
 const CUSTOM_FOLDERS_KEY = "disc.customFolders";
 const TRACK_ORDER_KEY = "disc.trackOrder";
 const FOLDER_GROUPS_KEY = "disc.folderGroups";
-
-// The Blob's MIME type has to actually match the file for playback to be
-// reliable — mp3 and wav need different ones, and this is the one place
-// in the app that needs to know that (everywhere else just deals with an
-// already-decoded AudioBuffer, which is format-agnostic).
-function getAudioMimeType(fileName) {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".wav")) return "audio/wav";
-  return "audio/mpeg";
-}
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -293,12 +284,10 @@ export default function App() {
     audioRef.current = new Audio();
   }
   const currentTrackRef = useRef(null);
-  const objectUrlRef = useRef(null);
   // Guards against a slow-to-resolve loadAndPlay call finishing *after* a
   // newer one has already taken over — without this, clicking through
-  // tracks quickly could let a stale call revoke the blob URL a newer,
-  // still-active load owns, or overwrite currentTrackRef back to the
-  // wrong track. See loadAndPlay below for how it's used.
+  // tracks quickly could let a stale call overwrite currentTrackRef back
+  // to the wrong track. See loadAndPlay below for how it's used.
   const loadRequestIdRef = useRef(0);
   const [currentTrackId, setCurrentTrackId] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -418,16 +407,24 @@ export default function App() {
     function handleLoadedMetadata() {
       setDuration(audio.duration || 0);
     }
+    // Not routed into any UI — just a console breadcrumb so a real playback
+    // failure (missing codec, unreadable file, a disconnected network
+    // drive mid-stream) shows up as something diagnosable rather than
+    // silent dead air.
+    function handleError() {
+      console.error("Disc: audio playback error", audio.error);
+    }
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("error", handleError);
     return () => {
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      audio.removeEventListener("error", handleError);
     };
   }, []);
 
@@ -891,35 +888,51 @@ export default function App() {
 
     if (isNewTrack) {
       const requestId = ++loadRequestIdRef.current;
-      const bytes = await window.disc.readAudioFile(track.filePath);
-      // A newer call to loadAndPlay may have started — and possibly
-      // already finished — while this read was in flight. If so, this
-      // call is stale and has to stop here: continuing would mean
-      // revoking the blob URL a newer, still-active load now owns, or
-      // overwriting currentTrackRef back to the wrong track.
-      if (loadRequestIdRef.current !== requestId) return;
-      if (!bytes) return;
-      const blob = new Blob([bytes], { type: getAudioMimeType(track.fileName) });
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-      const url = URL.createObjectURL(blob);
-      objectUrlRef.current = url;
-      audio.src = url;
+      // Points straight at the file via the disc-media:// protocol (see
+      // electron/main.js) instead of reading the whole file over IPC and
+      // building a Blob — Chromium streams it directly off disk, the same
+      // way it would a real <audio src="https://...">, so playback can
+      // start as soon as enough of the file has arrived rather than
+      // waiting on the entire thing to be read and copied into the
+      // renderer first. Setting src is synchronous, but decoding enough
+      // to know the track's metadata still isn't, so the same stale-call
+      // guard as before still matters below.
+      audio.src = toMediaUrl(track.filePath);
       currentTrackRef.current = track;
       setCurrentTrackId(track.id);
 
+      // Waiting on loadedmetadata alone isn't enough now that this is a
+      // streamed source rather than a fully-buffered Blob: MP3s without an
+      // explicit duration header (Xing/VBRI) often report `duration` as
+      // Infinity at loadedmetadata and only get a real, finite value
+      // slightly later via durationchange, once Chromium's worked it out
+      // from the file's actual size. The seek logic below needs a real
+      // duration to turn a fraction into a target time — without this,
+      // Number.isFinite(audio.duration) was false and the seek silently
+      // got skipped, so a mid-track click always played from 0. canplay is
+      // a bounded fallback so a genuinely unresolvable duration (a
+      // malformed file) still starts playing rather than hanging forever.
       await new Promise((resolve) => {
-        if (audio.readyState >= 1) {
+        function checkReady() {
+          if (Number.isFinite(audio.duration)) done();
+        }
+        function done() {
+          audio.removeEventListener("durationchange", checkReady);
+          audio.removeEventListener("canplay", done);
+          resolve();
+        }
+        if (Number.isFinite(audio.duration) && audio.readyState >= 1) {
           resolve();
           return;
         }
-        audio.addEventListener("loadedmetadata", resolve, { once: true });
+        audio.addEventListener("durationchange", checkReady);
+        audio.addEventListener("canplay", done, { once: true });
       });
 
-      // Same check again — a newer call can also complete while this one
-      // was waiting on loadedmetadata specifically (both listeners are on
-      // the same shared <audio> element, so an unrelated newer load's
-      // event could otherwise let this stale call resume and seek/play
-      // using its own now-outdated track and seekFraction).
+      // A newer call to loadAndPlay can complete first — either because it
+      // was made later but resolved sooner, or while this one was still
+      // waiting on loadedmetadata. Either way this call is stale: resuming
+      // would seek/play using its own now-outdated track and seekFraction.
       if (loadRequestIdRef.current !== requestId) return;
     }
 

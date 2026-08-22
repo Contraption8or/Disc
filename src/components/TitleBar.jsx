@@ -50,6 +50,7 @@ export default function TitleBar({
           onTogglePanel={onTogglePanel}
         />
         <ProfilesMenu />
+        <div className="titlebar__divider" />
         <button
           className="titlebar__icon-button"
           title="Command palette (Ctrl/Cmd+K)"
@@ -112,6 +113,7 @@ export default function TitleBar({
           <Icon name={pinned ? "lockClosed" : "lockOpen"} size={13} style={{ marginRight: 5 }} />
           {pinned ? "Pinned" : "Pin on top"}
         </button>
+        <div className="titlebar__divider" />
         <VolumeControl volume={volume} onChange={onVolumeChange} />
         <LayoutPresets
           presetNames={layoutPresetNames}
@@ -127,6 +129,7 @@ export default function TitleBar({
           onChange={onThemeChange}
           onPreviewCancel={onThemePreviewCancel}
         />
+        <div className="titlebar__divider" />
         <WindowControls />
       </div>
     </div>

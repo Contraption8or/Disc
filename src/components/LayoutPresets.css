@@ -6,8 +6,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-panel-alt);
-  border: 1px solid var(--border-color);
+  background: transparent;
+  border: none;
   color: var(--text-primary);
   border-radius: var(--radius-sm);
   padding: 6px 10px;

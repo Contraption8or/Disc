@@ -35,12 +35,20 @@
   -webkit-app-region: no-drag;
 }
 
+.titlebar__divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
 .titlebar__pin {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-panel-alt);
-  border: 1px solid var(--border-color);
+  background: transparent;
+  border: none;
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
@@ -55,9 +63,12 @@
 }
 
 .titlebar__pin--active {
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-panel-alt));
-  border-color: var(--accent);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.titlebar__pin--active:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .titlebar__icon-button {
@@ -66,13 +77,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-panel-alt);
-  border: 1px solid var(--border-color);
+  background: transparent;
+  border: none;
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
   position: relative;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .titlebar__icon-button:hover {

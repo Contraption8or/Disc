@@ -1,13 +1,52 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Readable } from "node:stream";
 import os from "node:os";
 import AdmZip from "adm-zip";
 
+// Content-Type by extension for disc-media:// responses (see below) — the
+// same set of formats the rest of the app already treats as playable
+// (Chromium's Web Audio decodes all of these natively). Falls back to
+// audio/mpeg for anything unrecognized, same as the old Blob-based
+// playback path did.
+const MEDIA_MIME_TYPES = {
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/opus",
+  ".flac": "audio/flac",
+  ".webm": "audio/webm",
+};
+
+function mediaMimeType(filePath) {
+  return MEDIA_MIME_TYPES[path.extname(filePath).toLowerCase()] || "audio/mpeg";
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === "development";
+
+// Playback used to read a track's entire file into memory, ship every byte
+// across IPC to the renderer, and build a Blob from it before <audio> could
+// even start — for a multi-MB file that's real, measurable latency on every
+// track switch, and it's redone from scratch each time. This custom scheme
+// lets <audio src="disc-media://..."> stream straight from disk instead
+// (net.fetch on a file:// URL gets Range-request/streaming support for
+// free), so playback can start as soon as the first chunk is available
+// rather than waiting on the whole file. Must be registered before the app
+// is ready. "standard: true" + "stream: true" are what let range requests
+// and progressive playback work; "supportFetchAPI" isn't needed since
+// nothing calls fetch() against it directly.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "disc-media",
+    privileges: { standard: true, secure: true, stream: true, bypassCSP: true, corsEnabled: true },
+  },
+]);
 
 let mainWindow = null;
 let normalBounds = null; // remembered so we can restore after compact mode
@@ -122,6 +161,77 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // The URL is disc-media://play/<encoded absolute file path>. "play" as
+  // the host is arbitrary (custom schemes need one) — everything that
+  // matters is in the path, which is exactly the file path run through
+  // encodeURIComponent so path separators, drive-letter colons, spaces,
+  // and unicode filenames all survive intact.
+  //
+  // This used to just be `net.fetch(pathToFileURL(filePath).href, ...)` —
+  // simpler, but it left Chromium unable to tell the resource was actually
+  // seekable (no reliable Accept-Ranges/Content-Range on the response), so
+  // every attempt to seek got silently reset back to 0: <audio>.currentTime
+  // would read back 0 immediately after being set, seeking/seeked fired but
+  // landed at ~0 either way. Building the response by hand — reading only
+  // the requested byte range via a real fs stream, and setting
+  // Content-Range/Accept-Ranges/206 ourselves — is what actually makes
+  // seeking work, rather than hoping net.fetch infers the right semantics
+  // for a local file.
+  protocol.handle("disc-media", async (request) => {
+    try {
+      const encoded = new URL(request.url).pathname.replace(/^\/+/, "");
+      const filePath = decodeURIComponent(encoded);
+      const stat = await fs.stat(filePath);
+      const fileSize = stat.size;
+      const contentType = mediaMimeType(filePath);
+
+      const rangeHeader = request.headers.get("range");
+      if (rangeHeader) {
+        const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+        let start = match?.[1] ? parseInt(match[1], 10) : 0;
+        let end = match?.[2] ? parseInt(match[2], 10) : fileSize - 1;
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end >= fileSize) end = fileSize - 1;
+        // A genuinely invalid range (start past the end of the file, or
+        // past what it resolves to after clamping — including the
+        // zero-byte-file case, where end lands at -1) has no sane byte
+        // range to fall back to. The previous version reset `start` to 0
+        // without touching `end`, which could still leave start > end and
+        // hand createReadStream a nonsensical range instead of properly
+        // rejecting it.
+        if (start >= fileSize || start > end) {
+          return new Response(null, {
+            status: 416,
+            headers: { "Content-Range": `bytes */${fileSize}` },
+          });
+        }
+
+        const stream = createReadStream(filePath, { start, end });
+        return new Response(Readable.toWeb(stream), {
+          status: 206,
+          headers: {
+            "Content-Type": contentType,
+            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+            "Content-Length": String(end - start + 1),
+            "Accept-Ranges": "bytes",
+          },
+        });
+      }
+
+      const stream = createReadStream(filePath);
+      return new Response(Readable.toWeb(stream), {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "Content-Length": String(fileSize),
+          "Accept-Ranges": "bytes",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+
   createWindow();
 
   app.on("activate", () => {

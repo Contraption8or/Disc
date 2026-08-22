@@ -64,9 +64,17 @@
 }
 
 .library-toolbar__button--ghost {
-  background: var(--bg-panel-alt);
+  background: transparent;
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: none;
+  /* --spill-shadow (the "Spill" glow appearance setting) is a global
+     variable, and the base .library-toolbar__button rule above applies
+     it unconditionally via box-shadow — so with Spill on, a plain ghost
+     button (not actually accent-colored) was still picking up the same
+     glow as a real accent button, which reads exactly like a border even
+     with border:none. Ghost buttons opt out entirely; --active below
+     opts back in, since once toggled on it genuinely is accent-colored. */
+  box-shadow: none;
 }
 
 .library-toolbar__button--ghost:hover:not(:disabled) {
@@ -74,9 +82,13 @@
 }
 
 .library-toolbar__button--active {
-  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel-alt));
-  border-color: var(--accent);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+}
+
+.library-toolbar__button--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .library-toolbar__tag-wrap {

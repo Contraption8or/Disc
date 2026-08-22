@@ -150,21 +150,75 @@ function estimateBpm(audioBuffer) {
   const minLag = Math.max(1, Math.floor((60 / maxBpm) * framesPerSecond));
   const maxLag = Math.min(novelty.length - 1, Math.ceil((60 / minBpm) * framesPerSecond));
 
-  let bestLag = -1;
-  let bestScore = -Infinity;
+  const scores = new Float64Array(maxLag + 1);
   for (let lag = minLag; lag <= maxLag; lag++) {
     let score = 0;
     for (let i = 0; i + lag < novelty.length; i++) {
       score += novelty[i] * novelty[i + lag];
     }
-    if (score > bestScore) {
-      bestScore = score;
+    scores[lag] = score;
+  }
+
+  let bestLag = -1;
+  let bestScore = -Infinity;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    if (scores[lag] > bestScore) {
+      bestScore = scores[lag];
       bestLag = lag;
     }
   }
-
   if (bestLag <= 0) return null;
-  return Math.round((60 * framesPerSecond) / bestLag);
+
+  // Raw autocorrelation reliably finds *a* repeating period, but a true
+  // tempo's octave (half/double speed) and triplet-feel neighbors (2/3,
+  // 3/2 the lag) repeat the same onset pattern just as strongly — often
+  // even more strongly, since a kick-and-snare pattern at 120 BPM also
+  // "repeats" at 60 and 240. This is the single most common failure mode
+  // of naive autocorrelation tempo detectors. Weighting each candidate by
+  // how plausible its resulting BPM actually is (most music sits roughly
+  // 90-150 BPM — a soft tie-breaker, not a hard cutoff, so genuinely slow
+  // or fast tracks still win when their raw score is clearly stronger)
+  // resolves ties in favor of the musically likely answer instead of
+  // whichever octave happened to score a few percent higher.
+  function tempoPrior(bpm) {
+    const center = 120;
+    const width = 55;
+    return Math.exp(-((bpm - center) ** 2) / (2 * width * width));
+  }
+  function weightedScoreAt(lag) {
+    if (lag < minLag || lag > maxLag) return -Infinity;
+    const bpm = (60 * framesPerSecond) / lag;
+    return scores[lag] * (0.5 + 0.5 * tempoPrior(bpm));
+  }
+
+  const candidateLags = [
+    bestLag,
+    bestLag * 2,
+    Math.round(bestLag / 2),
+    Math.round((bestLag * 3) / 2),
+    Math.round((bestLag * 2) / 3),
+  ];
+  let chosenLag = bestLag;
+  let chosenWeightedScore = -Infinity;
+  for (const lag of candidateLags) {
+    const s = weightedScoreAt(lag);
+    if (s > chosenWeightedScore) {
+      chosenWeightedScore = s;
+      chosenLag = lag;
+    }
+  }
+
+  // Parabolic interpolation around the winning lag for sub-frame
+  // precision — the lag grid alone quantizes BPM more coarsely than it
+  // needs to (a whole-frame step is several BPM wide at typical tempos),
+  // and a real peak usually sits slightly off-grid.
+  const y0 = chosenLag - 1 >= minLag ? scores[chosenLag - 1] : scores[chosenLag];
+  const y1 = scores[chosenLag];
+  const y2 = chosenLag + 1 <= maxLag ? scores[chosenLag + 1] : scores[chosenLag];
+  const denom = y0 - 2 * y1 + y2;
+  const offset = denom !== 0 ? Math.max(-1, Math.min(1, (0.5 * (y0 - y2)) / denom)) : 0;
+
+  return Math.round((60 * framesPerSecond) / (chosenLag + offset));
 }
 
 // Single-frequency magnitude via the Goertzel algorithm — cheaper than a
@@ -187,6 +241,20 @@ function goertzelMagnitude(samples, sampleRate, targetFreq) {
   const real = s1 - s2 * cosine;
   const imag = s2 * Math.sin(omega);
   return Math.sqrt(real * real + imag * imag);
+}
+
+// Reduces spectral leakage — without it, energy from a strong note bleeds
+// into neighboring semitone bins, which is especially damaging over a
+// short ~7s analysis window where there's little data for that leakage to
+// average out over.
+function applyHannWindow(samples) {
+  const n = samples.length;
+  const windowed = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1));
+    windowed[i] = samples[i] * w;
+  }
+  return windowed;
 }
 
 function pearsonCorrelation(a, b) {
@@ -251,11 +319,25 @@ function correlateKeyFromWindows(channelData, sampleRate, windows) {
     const windowLength = Math.floor(lengthSeconds * sampleRate);
     const samples = channelData.subarray(startSample, startSample + windowLength);
     if (samples.length < sampleRate * 0.5) continue;
+    const windowed = applyHannWindow(samples);
 
     // MIDI notes C2 (36) through B5 (83) — a reasonable musical range.
     for (let midi = 36; midi <= 83; midi++) {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
-      chroma[midi % 12] += goertzelMagnitude(samples, sampleRate, freq);
+      let magnitude = goertzelMagnitude(windowed, sampleRate, freq);
+      // Fold in the note's own overtones (2nd, 3rd harmonic) at reduced
+      // weight — a lightweight approximation of HPCP-style harmonic
+      // summation. Real instruments put meaningful energy into overtones,
+      // not just the fundamental, so measuring the fundamental alone
+      // under-counts a note's actual presence and makes the chroma vector
+      // noisier than it needs to be.
+      if (freq * 2 < sampleRate / 2) {
+        magnitude += 0.5 * goertzelMagnitude(windowed, sampleRate, freq * 2);
+      }
+      if (freq * 3 < sampleRate / 2) {
+        magnitude += 0.25 * goertzelMagnitude(windowed, sampleRate, freq * 3);
+      }
+      chroma[midi % 12] += magnitude;
     }
   }
 
