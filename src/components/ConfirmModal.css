@@ -1,12 +1,19 @@
 .confirm-modal__backdrop {
   animation: disc-backdrop-fade-in 0.15s ease;
-  position: absolute;
+  /* Fixed (not absolute) so this always covers the whole window regardless
+     of where ConfirmModal gets rendered — an absolute backdrop is sized
+     and positioned relative to its nearest positioned ancestor, which for
+     a small trigger like ProfilesMenu is just that trigger's own tiny box,
+     not the screen. z-index is set above every other overlay in the app
+     (highest elsewhere is 500) since a confirmation must never be able to
+     end up hidden behind whatever popover/menu triggered it. */
+  position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 200;
+  z-index: 1000;
 }
 
 .confirm-modal {

@@ -6,6 +6,13 @@
 import * as lamejsModule from "lamejs";
 const lamejs = lamejsModule.Mp3Encoder ? lamejsModule : lamejsModule.default;
 
+// lamejs's raw source has several internal files that reference each
+// other's classes as bare globals with no import at all — see
+// lamejsGlobalsFix.js for the full explanation. This side-effect import
+// patches all of them onto globalThis before anything below ever
+// constructs an Mp3Encoder.
+import "./lamejsGlobalsFix.js";
+
 import { getAudioContext, acquireSlot, releaseSlot } from "./waveform.js";
 
 const MP3_BITRATE_KBPS = 192;
@@ -35,7 +42,17 @@ async function yieldToUI() {
 // disk itself — just hands back the encoded bytes plus the source
 // track's duration, so the caller can report progress and decide where
 // the result goes.
-export async function convertToMp3(filePath, { onBlockProgress } = {}) {
+//
+// startFraction/endFraction (0-1, default the whole track) trim the
+// output to just that range — used for dragging a single marked section
+// out as its own clip rather than the whole file. Web Audio has no
+// partial-decode API, so this still has to decode the entire source file
+// first regardless of how short the requested range is; only the encode
+// step (the cheaper part) is limited to the trimmed range.
+export async function convertToMp3(
+  filePath,
+  { onBlockProgress, startFraction = 0, endFraction = 1 } = {}
+) {
   if (!window.disc) throw new Error("Not running inside Disc");
   if (!lamejs?.Mp3Encoder) {
     throw new Error(
@@ -58,8 +75,20 @@ export async function convertToMp3(filePath, { onBlockProgress } = {}) {
 
   const channels = Math.min(2, audioBuffer.numberOfChannels);
   const sampleRate = audioBuffer.sampleRate;
-  const left16 = floatTo16BitPCM(audioBuffer.getChannelData(0));
-  const right16 = channels === 2 ? floatTo16BitPCM(audioBuffer.getChannelData(1)) : null;
+  const totalSampleCount = audioBuffer.length;
+  const rangeStart = Math.max(
+    0,
+    Math.min(totalSampleCount, Math.round(startFraction * totalSampleCount))
+  );
+  const rangeEnd = Math.max(
+    rangeStart,
+    Math.min(totalSampleCount, Math.round(endFraction * totalSampleCount))
+  );
+  const left16 = floatTo16BitPCM(audioBuffer.getChannelData(0).subarray(rangeStart, rangeEnd));
+  const right16 =
+    channels === 2
+      ? floatTo16BitPCM(audioBuffer.getChannelData(1).subarray(rangeStart, rangeEnd))
+      : null;
 
   const encoder = new lamejs.Mp3Encoder(channels, sampleRate, MP3_BITRATE_KBPS);
   const mp3Chunks = [];
@@ -89,5 +118,8 @@ export async function convertToMp3(filePath, { onBlockProgress } = {}) {
     offset += chunk.length;
   }
 
-  return { mp3Bytes: result, durationSeconds: audioBuffer.duration };
+  return {
+    mp3Bytes: result,
+    durationSeconds: (rangeEnd - rangeStart) / sampleRate,
+  };
 }

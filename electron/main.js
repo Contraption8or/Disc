@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import AdmZip from "adm-zip";
@@ -18,6 +18,20 @@ const watchDebounceTimers = new Map(); // key -> Timeout
 // like the memory limit that have to be known before the window/renderer
 // even exists) ---------------------------------------------------------
 const settingsPath = path.join(app.getPath("userData"), "disc-settings.json");
+
+// Scratch directory for dragging a single marked section out to Premiere
+// (see src/audio/sectionDrag.js) — Disc trims + re-encodes just that
+// section's audio to a temp MP3 here so the native OS drag has a real
+// file to hand off, since it can't drag a byte range out of the original
+// file. Purely a regenerate-on-demand cache, never anything the user
+// created directly, so it's safe to wipe on every launch rather than
+// letting these tiny temp clips accumulate across sessions forever.
+const sectionTempDir = path.join(app.getPath("temp"), "disc-sections");
+try {
+  if (existsSync(sectionTempDir)) rmSync(sectionTempDir, { recursive: true, force: true });
+} catch {
+  // Non-fatal — worst case a handful of stale temp files stick around.
+}
 
 function loadSettings() {
   try {
@@ -536,6 +550,25 @@ ipcMain.handle("disc:write-converted-mp3", async (_event, { destFolder, fileName
     } catch {
       // Doesn't exist yet — good, proceed.
     }
+    await fs.writeFile(destPath, Buffer.from(bytes));
+    return { success: true, path: destPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Writes a trimmed marked-section clip to the scratch temp directory
+// above, for dragging just that section into Premiere. Unlike
+// disc:write-converted-mp3 (which writes into the user's real music
+// folders and must never silently clobber something), this is a
+// disposable, regenerate-on-demand cache — it always overwrites, and
+// path.basename() strips any directory components from the renderer-
+// supplied name so a write can never land outside sectionTempDir.
+ipcMain.handle("disc:write-temp-audio", async (_event, { fileName, bytes }) => {
+  try {
+    if (!existsSync(sectionTempDir)) mkdirSync(sectionTempDir, { recursive: true });
+    const safeName = path.basename(String(fileName || "section.mp3"));
+    const destPath = path.join(sectionTempDir, safeName);
     await fs.writeFile(destPath, Buffer.from(bytes));
     return { success: true, path: destPath };
   } catch (err) {

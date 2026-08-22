@@ -100,6 +100,7 @@ export default function LibraryPanel() {
     collections,
     similarToTrackId,
     onFindSimilar,
+    onDeleteTracks,
   } = useDisc();
 
   const [query, setQuery] = useState("");
@@ -108,6 +109,11 @@ export default function LibraryPanel() {
   const [sortKey, setSortKey] = useState("folder");
   const [sortDir, setSortDir] = useState("asc");
   const [showDuplicatesOnly, setShowDuplicatesOnly] = useState(false);
+  // Shift-clicking the Duplicates button turns this on: instead of only
+  // showing duplicates among the tracks the current folder/search would
+  // already show, it spans the entire library, so both sides of a
+  // duplicate pair show up even when they live in different folders.
+  const [duplicatesGlobal, setDuplicatesGlobal] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [draggedTrackId, setDraggedTrackId] = useState(null);
   const [dragOverTrackId, setDragOverTrackId] = useState(null);
@@ -182,10 +188,13 @@ export default function LibraryPanel() {
 
   // The Health Dashboard's "duplicates" category is just the existing
   // Duplicates toggle — translate the signal and clear it immediately so
-  // it doesn't also linger as a separate always-on filter.
+  // it doesn't also linger as a separate always-on filter. The dashboard
+  // is documented as filtering "the whole library," so this always uses
+  // the library-wide scope, same as a shift-click.
   useEffect(() => {
     if (healthFilter === "duplicates") {
       setShowDuplicatesOnly(true);
+      setDuplicatesGlobal(true);
       onSetHealthFilter(null);
     }
   }, [healthFilter, onSetHealthFilter]);
@@ -199,10 +208,13 @@ export default function LibraryPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolderId]);
 
-  // A non-empty search (or an active health filter) spans every folder,
-  // not just the one currently selected in the sidebar.
+  // A non-empty search (or an active health filter, or the library-wide
+  // Duplicates scope) spans every folder, not just the one currently
+  // selected in the sidebar.
+  const isDuplicatesGlobal = showDuplicatesOnly && duplicatesGlobal;
   const searchFiltered = useMemo(() => {
-    let result = isGlobalSearch || isHealthFiltering ? allTracks : folderFiltered;
+    let result =
+      isGlobalSearch || isHealthFiltering || isDuplicatesGlobal ? allTracks : folderFiltered;
 
     if (isGlobalSearch) {
       const q = trimmedQuery.toLowerCase();
@@ -252,6 +264,7 @@ export default function LibraryPanel() {
   }, [
     isGlobalSearch,
     isHealthFiltering,
+    isDuplicatesGlobal,
     allTracks,
     folderFiltered,
     trimmedQuery,
@@ -542,7 +555,19 @@ export default function LibraryPanel() {
         sortDir={sortDir}
         onToggleSortDir={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
         showDuplicatesOnly={showDuplicatesOnly}
-        onToggleDuplicates={() => setShowDuplicatesOnly((v) => !v)}
+        duplicatesGlobal={duplicatesGlobal}
+        onToggleDuplicates={(e) => {
+          if (e?.shiftKey) {
+            // Shift-click is a deliberate "show me everything" action, not
+            // a toggle — it always switches to (and turns on) the
+            // library-wide scope, regardless of the button's current state.
+            setDuplicatesGlobal(true);
+            setShowDuplicatesOnly(true);
+            return;
+          }
+          setShowDuplicatesOnly((v) => !v);
+          setDuplicatesGlobal(false);
+        }}
         duplicateCount={duplicateIds.size}
         onImportFiles={handleImportFiles}
         importDisabled={!musicFolderPath && !activeCustomFolder?.folderPath}
@@ -652,7 +677,9 @@ export default function LibraryPanel() {
                 {isSimilarMode
                   ? "No other tracks have been analyzed yet — open a few more in Details, then try Find Similar again."
                   : showDuplicatesOnly
-                  ? "No likely duplicates found in this view."
+                  ? duplicatesGlobal
+                    ? "No likely duplicates found anywhere in your library."
+                    : "No likely duplicates found in this view. Shift-click Duplicates to check the whole library."
                   : healthFilter === "untagged"
                   ? "Every track in your library has at least one tag. Nice."
                   : healthFilter === "unanalyzed"
@@ -718,6 +745,11 @@ export default function LibraryPanel() {
                   onToggleFavorite={onToggleFavorite}
                   isMissing={isTrackMissing(track)}
                   isMultiSelected={selectedIds.has(track.id)}
+                  selectionCount={selectedIds.size}
+                  onDeleteSelection={async () => {
+                    await onDeleteTracks(Array.from(selectedIds));
+                    setSelectedIds(new Set());
+                  }}
                   onRowClick={handleRowClick}
                   canManuallyReorder={canManuallyReorder}
                   isDragOver={dragOverTrackId === track.id}

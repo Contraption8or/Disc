@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Disc
 
 Local audio/video library manager for video editors, built as an Electron
@@ -28,6 +32,44 @@ are built the way they are.
 - `npm run build` — production Vite build
 - `npm run dist` — full packaged build via electron-builder (writes to
   `release/`, gitignored)
+
+There is no test suite and no lint script configured in this project —
+`npm test` / `npm run lint` don't exist. Verify changes with `npm run
+build` (catches syntax/import errors) and manual exercise via `npm run
+dev`.
+
+## Architecture: the three process boundaries
+
+- **`electron/main.js`** (Node, ESM) — the only code with filesystem/OS
+  access: folder scanning, file watchers, dialogs, drag-out-to-Premiere,
+  zip export, mp3 conversion I/O, profile file storage. Talks to the
+  renderer exclusively through named `ipcMain.handle`/`ipcMain.on`
+  channels (`disc:*`).
+- **`electron/preload.cjs`** (CommonJS, sandboxed) — the only bridge
+  between the two. Every capability the renderer can reach is explicitly
+  listed here via `contextBridge.exposeInMainWorld("disc", {...})`; there
+  is no other path from renderer code to Node/OS APIs. Adding a new main
+  ↔ renderer capability means touching both this file and `main.js`.
+- **`src/`** (React renderer, browser-sandboxed) — calls `window.disc.*`
+  for anything privileged, otherwise a normal Vite/React app.
+
+## Architecture: state flow
+
+`src/App.jsx` (~2100 lines) owns essentially all top-level app state —
+folders, tracks, playback, tags, layout, settings, etc. — and passes it
+into `src/context/DiscContext.jsx`, which is how that live state reaches
+components rendered inside dockview panels (panels are dockview's own
+tree, not a normal React child tree, so context is how state crosses that
+boundary). When tracing "where does this piece of state live," start in
+`App.jsx`.
+
+Persistence is flat `localStorage`, one key per concern (tags, notes,
+theme, layout, shortcuts, etc.), each concern with its own
+`*Storage.js` module (e.g. `src/tags/tagStorage.js`,
+`src/notes/noteStorage.js`) that reads/writes just that key. Profiles
+(`src/profiles/profileData.js`) work by iterating a fixed list of these
+keys — a new persisted feature needs a new key added to
+`PROFILE_KEYS` there, or it silently won't travel with exported profiles.
 
 ## Working in this repo
 

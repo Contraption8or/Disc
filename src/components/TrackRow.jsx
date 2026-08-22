@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import { computeWaveform, getCachedWaveform } from "../audio/waveform.js";
 import { downsamplePeaks } from "../audio/downsamplePeaks.js";
+import { getSectionDragPath, prepareSectionDrag } from "../audio/sectionDrag.js";
 import { useElementWidth } from "../hooks/useElementWidth.js";
 import { formatSize, formatDuration, stripExtension } from "../utils/format.js";
 import TrackContextMenu from "./TrackContextMenu.jsx";
@@ -16,6 +17,8 @@ function TrackRow({
   onToggleFavorite,
   isMissing,
   isMultiSelected,
+  selectionCount,
+  onDeleteSelection,
   onRowClick,
   canManuallyReorder,
   isDragOver,
@@ -52,10 +55,6 @@ function TrackRow({
   const [contextMenu, setContextMenu] = useState(null); // { x, y } | null
   const [isRenaming, setIsRenaming] = useState(false);
   const renameInputRef = useRef(null);
-  // Set while a native OS drag-out (to Premiere) is in progress — checked
-  // by the waveform-scrub drag below so the two don't fight over the same
-  // mouse gesture. See handleWaveformMouseDown/handleDragStart.
-  const isNativeDraggingRef = useRef(false);
   const waveformRef = useRef(null);
   const progressRef = useRef(null);
   const waveformWidth = useElementWidth(waveformRef);
@@ -99,6 +98,24 @@ function TrackRow({
     return () => observer.disconnect();
   }, [track, waveformData, isMissing, isVideo]);
 
+  // Start preparing every marked section's trimmed clip as soon as this
+  // row's own waveform is ready (i.e. it's actually been visible on
+  // screen), rather than waiting for a hover right before a drag. Hover
+  // alone (see handleWaveformMouseEnter below) often doesn't leave enough
+  // lead time — trimming still means decoding the whole source file first,
+  // which can take a moment — so a drag started right after hovering in
+  // could otherwise beat the render and silently fall back to dragging
+  // the whole track. Tying this to waveformData reuses the same "only
+  // do this for rows that have actually scrolled into view" gate the
+  // waveform decode above already uses, rather than eagerly rendering
+  // clips for the entire library up front.
+  useEffect(() => {
+    if (isMissing || isVideo || !waveformData) return;
+    (trackSections[track.id] || []).forEach((section, i) =>
+      prepareSectionDrag(track, section, i)
+    );
+  }, [waveformData, trackSections, track, isMissing, isVideo]);
+
   // While this row's track is the one actually playing (not just loaded/
   // paused), drive the progress overlay directly via rAF (not React
   // state) so it doesn't re-render on every frame.
@@ -134,60 +151,71 @@ function TrackRow({
     }
   }
 
-  // mousedown (rather than click) so a single click still seeks exactly
-  // as before, but holding and moving the mouse continuously scrubs the
-  // playhead instead of only being able to click one position at a time.
-  // The window-level listeners (rather than only reacting on this
-  // element) are what let the drag keep tracking even if the pointer
-  // strays outside the waveform's own bounds mid-drag.
-  //
-  // This element also has a native OS drag-out (to Premiere — see
-  // handleDragStart below), and the two genuinely can't share a mouse
-  // gesture cleanly: once handleDragStart fires, the OS takes over
-  // mouse tracking for the rest of that drag, and there's no guarantee
-  // this component ever sees a normal mouseup for it. isNativeDraggingRef
-  // gets set the moment that happens, so this scrub stops seeking for
-  // the rest of the gesture instead of fighting the OS drag — and
-  // dragend (which reliably fires once an OS-level drag concludes,
-  // dropped or not) is wired up alongside mouseup specifically so the
-  // window listeners always get torn down, even when mouseup itself
-  // never arrives.
-  function handleWaveformMouseDown(e) {
-    if (isMissing || isVideo) return;
+  // A plain click (no movement in between) seeks to that point in the
+  // track. Any real drag never reaches this handler at all — once the
+  // browser recognizes a drag gesture (see handleDragStart) it stops
+  // dispatching click for that same press, so click-to-seek and
+  // drag-out-to-Premiere can't collide with each other.
+  function handleWaveformClick(e) {
+    if (isMissing || isVideo || e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     onSelectTrack(track);
-    isNativeDraggingRef.current = false;
+    seekTo(track, fraction);
+  }
+
+  // Right/middle click: let the context menu handle it. Chromium's native
+  // drag-candidate detection isn't gated to the primary button — it runs
+  // off the `draggable` attribute regardless of which button is held — so
+  // a right-click-and-move could otherwise still pick the track up as a
+  // native OS drag underneath the context menu. Explicitly turning
+  // dragging off for the duration of a non-left press (restored on
+  // release) is what stops that.
+  function handleWaveformMouseDown(e) {
+    if (isMissing || isVideo || e.button === 0) return;
     const container = e.currentTarget;
+    container.draggable = false;
+    const restore = () => {
+      container.draggable = true;
+      window.removeEventListener("mouseup", restore);
+    };
+    window.addEventListener("mouseup", restore);
+  }
 
-    function fractionAt(clientX) {
-      const rect = container.getBoundingClientRect();
-      return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    }
-
-    seekTo(track, fractionAt(e.clientX));
-
-    function handleMouseMove(moveEvent) {
-      if (isNativeDraggingRef.current) return;
-      seekTo(track, fractionAt(moveEvent.clientX));
-    }
-    function cleanup() {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", cleanup);
-      container.removeEventListener("dragend", cleanup);
-    }
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", cleanup);
-    container.addEventListener("dragend", cleanup);
+  // Hovering the waveform starts preparing every marked section's trimmed
+  // clip in the background (cached — see sectionDrag.js), so that by the
+  // time an actual drag starts, dragging from within a highlighted band
+  // can hand off just that section instead of the whole file. This can't
+  // happen inside dragstart itself: Electron's startDrag must be called
+  // synchronously from that event, and trimming+encoding isn't instant.
+  function handleWaveformMouseEnter() {
+    if (isMissing || isVideo) return;
+    (trackSections[track.id] || []).forEach((section, i) =>
+      prepareSectionDrag(track, section, i)
+    );
   }
 
   // Native OS drag-out — this is what lets the waveform be dragged
   // straight onto Premiere Pro's timeline. Chromium requires
   // preventDefault() here since the actual drag is handed off to the OS
   // via startDrag in the main process, not the page's own drag system.
+  //
+  // If the drag started from within a marked section's highlighted band,
+  // that section's own trimmed clip is dragged instead of the whole
+  // track — but only once it's actually ready (see handleWaveformMouseEnter
+  // above); a grab so fast it beats the render just falls back to
+  // dragging the whole file, same as dragging from anywhere else on the
+  // waveform.
   function handleDragStart(e) {
     e.preventDefault();
     if (isMissing) return;
-    isNativeDraggingRef.current = true;
-    window.disc?.startDrag(track.filePath);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const section = (trackSections[track.id] || []).find(
+      (s) => fraction >= s.startFraction && fraction <= s.endFraction
+    );
+    const sectionPath = section ? getSectionDragPath(track, section) : null;
+    window.disc?.startDrag(sectionPath || track.filePath);
   }
 
   function handleInfoClick(e) {
@@ -252,6 +280,8 @@ function TrackRow({
         className="track-row__waveform"
         ref={waveformRef}
         onMouseDown={handleWaveformMouseDown}
+        onMouseEnter={handleWaveformMouseEnter}
+        onClick={handleWaveformClick}
         draggable={!isMissing}
         onDragStart={handleDragStart}
         title={
@@ -259,7 +289,9 @@ function TrackRow({
             ? "File not found — the folder it's in may be unreachable"
             : isVideo
             ? "Drag into Premiere Pro (Disc doesn't preview video clips)"
-            : "Click, or drag the playhead, to move around — drag out to Premiere Pro"
+            : (trackSections[track.id] || []).length > 0
+            ? "Click to seek — drag a highlighted section to send just that section to Premiere Pro, drag anywhere else for the whole track"
+            : "Click to seek — drag out to Premiere Pro"
         }
       >
         {isMissing ? null : isVideo ? (
@@ -274,6 +306,17 @@ function TrackRow({
             ))}
           </div>
         ) : null}
+        {!isVideo &&
+          (trackSections[track.id] || []).map((section) => (
+            <div
+              key={section.id}
+              className="track-row__section-highlight"
+              style={{
+                left: `${section.startFraction * 100}%`,
+                width: `${(section.endFraction - section.startFraction) * 100}%`,
+              }}
+            />
+          ))}
         <div className="track-row__progress" ref={progressRef} />
       </div>
 
@@ -338,7 +381,12 @@ function TrackRow({
             onRemoveTrackFromCollection(track.id, activeFolderId)
           }
           onRename={isMissing ? null : () => setIsRenaming(true)}
-          onDelete={() => onDeleteTrack(track.filePath)}
+          deleteCount={isMultiSelected && selectionCount > 1 ? selectionCount : 1}
+          onDelete={
+            isMultiSelected && selectionCount > 1
+              ? onDeleteSelection
+              : () => onDeleteTrack(track.filePath)
+          }
           onClose={() => setContextMenu(null)}
         />
       )}

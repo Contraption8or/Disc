@@ -787,6 +787,31 @@ export default function App() {
     [rescan, customFolders, applyScanResult]
   );
 
+  // Same as handleDeleteTrack, but for a whole multi-selection at once —
+  // takes track ids (matching every other batch action, e.g. handleBatchMove
+  // above) rather than file paths, and does one rescan at the end instead
+  // of one per file.
+  const handleDeleteTracks = useCallback(
+    async (trackIds) => {
+      if (!window.disc || !trackIds || trackIds.length === 0) return;
+      const idSet = new Set(trackIds);
+      const toDelete = allTracksRef.current.filter((t) => idSet.has(t.id));
+      for (const track of toDelete) {
+        await window.disc.deleteFile(track.filePath);
+      }
+      rescan();
+      customFolders.forEach((folder) => {
+        if (!folder.folderPath) return;
+        window.disc.scanFolder(folder.folderPath).then((found) => {
+          applyScanResult(folder.id, found, (result) =>
+            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: result }))
+          );
+        });
+      });
+    },
+    [rescan, customFolders, applyScanResult]
+  );
+
   // Renaming a track renames the actual file on disk — and since a
   // track's id *is* its file path everywhere in Disc, that means the id
   // changes too. Everything keyed by the old id (favorites, tags, notes,
@@ -1556,6 +1581,7 @@ export default function App() {
       onDropFiles: handleDropFiles,
       onBatchMove: handleBatchMove,
       onDeleteTrack: handleDeleteTrack,
+      onDeleteTracks: handleDeleteTracks,
       onRenameTrackFile: handleRenameTrackFile,
       trackNotes,
       onSetTrackNote: handleSetTrackNote,
@@ -1652,6 +1678,7 @@ export default function App() {
       handleDropFiles,
       handleBatchMove,
       handleDeleteTrack,
+      handleDeleteTracks,
       handleRenameTrackFile,
       trackNotes,
       handleSetTrackNote,

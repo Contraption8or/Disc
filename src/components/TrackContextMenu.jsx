@@ -17,6 +17,7 @@ export default function TrackContextMenu({
   onRemoveFromCollection,
   onRename,
   onDelete,
+  deleteCount = 1,
   onClose,
 }) {
   const [copied, setCopied] = useState(false);
@@ -163,7 +164,11 @@ export default function TrackContextMenu({
           }
         }}
       >
-        {armed ? "Click again to move to Trash" : "Delete Song…"}
+        {armed
+          ? `Click again to move ${deleteCount > 1 ? `${deleteCount} songs` : "it"} to Trash`
+          : deleteCount > 1
+          ? `Delete ${deleteCount} Songs…`
+          : "Delete Song…"}
       </button>
     </div>,
     document.body

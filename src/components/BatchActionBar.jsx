@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import TagCreateMenu from "./TagCreateMenu.jsx";
 import Icon from "./Icon.jsx";
@@ -15,6 +15,7 @@ export default function BatchActionBar({ selectedIds, onClear }) {
     collections,
     onAddTracksToCollection,
     onCreateCollection,
+    onDeleteTracks,
   } = useDisc();
 
   const [tagListOpen, setTagListOpen] = useState(false);
@@ -23,8 +24,21 @@ export default function BatchActionBar({ selectedIds, onClear }) {
   const [collectionListOpen, setCollectionListOpen] = useState(false);
   const [collectionCreateOpen, setCollectionCreateOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
+  // Armed on the first click, only actually deletes on a second — same
+  // double-click-to-confirm pattern as the per-track context menu, so a
+  // batch delete (which can wipe out a lot at once) is hard to trigger by
+  // accident.
+  const [deleteArmed, setDeleteArmed] = useState(false);
 
   const ids = Array.from(selectedIds);
+
+  // Un-arm the delete confirmation whenever the selection itself changes,
+  // so a stray second click can't land on a completely different batch of
+  // tracks than the one that was actually armed.
+  useEffect(() => {
+    setDeleteArmed(false);
+  }, [selectedIds]);
+
   const moveTargets = customFolders
     .filter((f) => f.folderPath)
     .map((f) => ({ id: f.id, name: f.name, path: f.folderPath }));
@@ -199,6 +213,23 @@ export default function BatchActionBar({ selectedIds, onClear }) {
           </div>
         )}
       </div>
+
+      <button
+        className={"batch-bar__button batch-bar__button--danger" + (deleteArmed ? " batch-bar__button--armed" : "")}
+        onClick={() => {
+          if (deleteArmed) {
+            onDeleteTracks(ids);
+            setDeleteArmed(false);
+            onClear();
+          } else {
+            setDeleteArmed(true);
+          }
+        }}
+        title="Move all selected files to the OS Trash/Recycle Bin (recoverable)"
+      >
+        <Icon name="trash" size={13} style={{ marginRight: 5 }} />
+        {deleteArmed ? `Click again to delete ${ids.length}` : "Delete"}
+      </button>
 
       <button className="batch-bar__clear" onClick={onClear} title="Clear selection">
         × Clear

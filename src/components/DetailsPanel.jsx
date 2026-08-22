@@ -4,6 +4,7 @@ import { computeWaveform, getCachedWaveform } from "../audio/waveform.js";
 import { computeAnalysis, getCachedAnalysis } from "../audio/analysis.js";
 import { describeVibe } from "../audio/similarity.js";
 import { downsamplePeaks } from "../audio/downsamplePeaks.js";
+import { getSectionDragPath, prepareSectionDrag } from "../audio/sectionDrag.js";
 import { useElementWidth } from "../hooks/useElementWidth.js";
 import { formatSize, formatDuration, stripExtension } from "../utils/format.js";
 import TagAssignMenu from "./TagAssignMenu.jsx";
@@ -14,6 +15,71 @@ import "./DetailsPanel.css";
 
 const BAR_PX = 3;
 const KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+// One row in the marked-sections list. Dragging it out hands Premiere just
+// that section's audio, not the whole track — which means Disc first has
+// to trim + re-encode a standalone clip and write it to a temp file (see
+// src/audio/sectionDrag.js), and that can't happen live inside the
+// browser's dragstart the way a whole-track drag can (Electron's
+// startDrag has to be called synchronously from that event, and
+// decode+encode isn't instant). So the clip is prepared ahead of time —
+// starting the moment the pointer enters the row — and cached; by the
+// time an actual drag gesture happens, it's normally already sitting on
+// disk ready to hand off. A very fast grab right after hover can still
+// beat the render, though: dragstart checks whether the file is actually
+// ready and just cancels the drag (falling back to a normal click) if not,
+// same veto pattern TrackRow uses for its own drag-out.
+function SectionRow({ track, section, index, label, onJump, onDelete }) {
+  const [ready, setReady] = useState(() => Boolean(getSectionDragPath(track, section)));
+  const pathRef = useRef(getSectionDragPath(track, section));
+
+  function ensurePrepared() {
+    if (pathRef.current) return;
+    prepareSectionDrag(track, section, index)
+      .then((path) => {
+        pathRef.current = path;
+        setReady(true);
+      })
+      .catch((err) => console.error("Couldn't prepare section for drag:", err));
+  }
+
+  function handleDragStart(e) {
+    e.preventDefault();
+    if (!pathRef.current) return;
+    window.disc?.startDrag(pathRef.current);
+  }
+
+  return (
+    <div
+      className="details-panel__section-row"
+      draggable
+      onMouseEnter={ensurePrepared}
+      onDragStart={handleDragStart}
+    >
+      <button className="details-panel__section-jump" title="Jump to this section" onClick={onJump}>
+        <Icon name="play" size={10} style={{ marginRight: 6 }} />
+        {label}
+      </button>
+      <span
+        className="details-panel__section-drag-hint"
+        title={
+          ready
+            ? "Drag into Premiere Pro — just this section's audio"
+            : "Hover a moment, then drag into Premiere Pro — just this section's audio"
+        }
+      >
+        <Icon name="gripDots" size={12} />
+      </span>
+      <button
+        className="details-panel__section-delete"
+        title="Delete this section"
+        onClick={onDelete}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 export default function DetailsPanel() {
   const {
@@ -247,6 +313,27 @@ export default function DetailsPanel() {
             ))}
           </div>
         ) : null}
+        {!isVideo &&
+          (trackSections[track.id] || []).map((section) => (
+            <div
+              key={section.id}
+              className="details-panel__section-highlight"
+              style={{
+                left: `${section.startFraction * 100}%`,
+                width: `${(section.endFraction - section.startFraction) * 100}%`,
+              }}
+              title={`Section: ${formatDuration(section.startFraction * (waveformData?.duration || 0))} → ${formatDuration(
+                section.endFraction * (waveformData?.duration || 0)
+              )}`}
+            />
+          ))}
+        {!isVideo && pendingIn != null && (
+          <div
+            className="details-panel__section-pending-marker"
+            style={{ left: `${pendingIn * 100}%` }}
+            title="Marked in point — Mark Out to complete the section"
+          />
+        )}
       </div>
 
       <button
@@ -370,24 +457,17 @@ export default function DetailsPanel() {
               {trackSections[track.id].map((section, i) => {
                 const dur = waveformData?.duration || 0;
                 return (
-                  <div key={section.id} className="details-panel__section-row">
-                    <button
-                      className="details-panel__section-jump"
-                      title="Jump to this section"
-                      onClick={() => seekTo(track, section.startFraction)}
-                    >
-                      <Icon name="play" size={10} style={{ marginRight: 6 }} />
-                      {i + 1}. {formatDuration(section.startFraction * dur)} →{" "}
-                      {formatDuration(section.endFraction * dur)}
-                    </button>
-                    <button
-                      className="details-panel__section-delete"
-                      title="Delete this section"
-                      onClick={() => onDeleteTrackSection(track.id, section.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
+                  <SectionRow
+                    key={section.id}
+                    track={track}
+                    section={section}
+                    index={i}
+                    label={`${i + 1}. ${formatDuration(section.startFraction * dur)} → ${formatDuration(
+                      section.endFraction * dur
+                    )}`}
+                    onJump={() => seekTo(track, section.startFraction)}
+                    onDelete={() => onDeleteTrackSection(track.id, section.id)}
+                  />
                 );
               })}
             </div>

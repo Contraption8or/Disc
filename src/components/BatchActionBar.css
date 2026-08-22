@@ -36,6 +36,26 @@
   cursor: not-allowed;
 }
 
+.batch-bar__button--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border-color));
+}
+
+.batch-bar__button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 15%, var(--bg-panel-alt));
+}
+
+.batch-bar__button--armed {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.batch-bar__button--armed:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.1);
+}
+
 .batch-bar__wrap {
   position: relative;
 }

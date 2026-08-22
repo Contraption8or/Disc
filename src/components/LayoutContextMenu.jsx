@@ -2,7 +2,15 @@ import { useEffect, useRef } from "react";
 import Icon from "./Icon.jsx";
 import "./LayoutContextMenu.css";
 
-export default function LayoutContextMenu({ x, y, isDefault, onSetDefault, onRename, onClose }) {
+export default function LayoutContextMenu({
+  x,
+  y,
+  isDefault,
+  onSetDefault,
+  onRename,
+  onUpdateWithCurrent,
+  onClose,
+}) {
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -30,6 +38,17 @@ export default function LayoutContextMenu({ x, y, isDefault, onSetDefault, onRen
         }}
       >
         Rename…
+      </button>
+      <button
+        className="layout-context-menu__option"
+        title="Overwrite this preset with the panel layout you currently have open"
+        onClick={() => {
+          onUpdateWithCurrent();
+          onClose();
+        }}
+      >
+        <Icon name="convert" size={13} style={{ marginRight: 6 }} />
+        Update with Current Layout
       </button>
       <button
         className="layout-context-menu__option"

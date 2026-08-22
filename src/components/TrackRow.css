@@ -158,6 +158,16 @@
   }
 }
 
+.track-row__section-highlight {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-left: 1px solid var(--accent);
+  border-right: 1px solid var(--accent);
+  pointer-events: none;
+}
+
 .track-row__progress {
   position: absolute;
   inset: 0;

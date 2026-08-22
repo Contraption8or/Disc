@@ -174,6 +174,7 @@ export default function LayoutPresets({
           isDefault={contextMenu.name === defaultLayoutName}
           onSetDefault={() => onSetDefault(contextMenu.name)}
           onRename={() => setEditingName(contextMenu.name)}
+          onUpdateWithCurrent={() => onSave(contextMenu.name)}
           onClose={() => setContextMenu(null)}
         />
       )}

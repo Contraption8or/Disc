@@ -36,6 +36,7 @@ export default function LibraryToolbar({
   sortDir,
   onToggleSortDir,
   showDuplicatesOnly,
+  duplicatesGlobal,
   onToggleDuplicates,
   duplicateCount,
   onImportFiles,
@@ -183,13 +184,15 @@ export default function LibraryToolbar({
           (showDuplicatesOnly ? " library-toolbar__button--active" : "")
         }
         title={
-          duplicateCount > 0
+          (duplicateCount > 0
             ? `${duplicateCount} possible duplicate(s) — by exact file size, or waveform-shape similarity among tracks you've already opened`
-            : "No likely duplicates found"
+            : "No likely duplicates found") +
+          " · Shift-click for every duplicate in the whole library, regardless of the folder/search you're currently viewing"
         }
         onClick={onToggleDuplicates}
       >
         ⧉ Duplicates{duplicateCount > 0 ? ` (${duplicateCount})` : ""}
+        {showDuplicatesOnly && duplicatesGlobal ? " · Library" : ""}
       </button>
 
       <div className="library-toolbar__divider" />

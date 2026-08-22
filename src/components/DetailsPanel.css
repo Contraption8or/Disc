@@ -91,6 +91,7 @@
 }
 
 .details-panel__mini-waveform {
+  position: relative;
   height: 64px;
   display: flex;
   align-items: center;
@@ -101,6 +102,29 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--space-2);
+}
+
+/* Marked-section overlays share the same padded coordinate space as the
+   bars underneath (both are positioned relative to this container's
+   padding box), so left/width percentages line up with the section's
+   actual position in the waveform without any extra offset math. */
+.details-panel__section-highlight {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-left: 1px solid var(--accent);
+  border-right: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+.details-panel__section-pending-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
 }
 
 .details-panel__mini-waveform span {
@@ -465,6 +489,17 @@ select.details-panel__value--input {
 .details-panel__section-jump:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.details-panel__section-drag-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  color: var(--text-tertiary);
+  cursor: grab;
 }
 
 .details-panel__section-delete {
