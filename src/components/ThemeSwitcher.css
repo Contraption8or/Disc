@@ -1,0 +1,110 @@
+.theme-switcher {
+  position: relative;
+}
+
+.theme-switcher__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.theme-switcher__trigger:hover {
+  background: var(--bg-hover);
+}
+
+.theme-switcher__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
+}
+
+.theme-switcher__menu {
+  animation: disc-popover-in 0.12s ease;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  min-width: 210px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-switcher__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-switcher__option:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.theme-switcher__option--active {
+  background: var(--bg-active);
+}
+
+.theme-switcher__option--muted {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.theme-switcher__option--accent {
+  color: var(--accent);
+}
+
+.theme-switcher__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.theme-switcher__row .theme-switcher__option {
+  flex: 1;
+}
+
+.theme-switcher__delete {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.theme-switcher__delete:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
+.theme-switcher__divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: var(--space-1) 4px;
+}

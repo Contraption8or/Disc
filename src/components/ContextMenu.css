@@ -1,0 +1,53 @@
+.context-menu {
+  animation: disc-popover-in 0.12s ease;
+  position: fixed;
+  z-index: 100;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+}
+
+.context-menu__message {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+}
+
+.context-menu__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.context-menu__no,
+.context-menu__yes {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-menu__no {
+  background: var(--bg-panel-alt);
+  color: var(--text-secondary);
+}
+
+.context-menu__no:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.context-menu__yes {
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.context-menu__yes:hover {
+  background: var(--accent-hover);
+}

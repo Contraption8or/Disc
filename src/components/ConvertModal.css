@@ -1,0 +1,40 @@
+.convert-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: 400px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.convert-modal__source-buttons {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.convert-modal__source-buttons button {
+  flex: 1;
+}
+
+.convert-modal__failed-list {
+  max-height: 140px;
+  overflow-y: auto;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.convert-modal__failed-item {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.convert-modal__failed-item strong {
+  color: var(--text-primary);
+}

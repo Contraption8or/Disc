@@ -1,0 +1,114 @@
+.health-modal__backdrop {
+  animation: disc-backdrop-fade-in 0.15s ease;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.health-modal {
+  animation: disc-modal-scale-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: 420px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.health-modal__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.health-modal__subtitle {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 4px 0 var(--space-4) 0;
+}
+
+.health-modal__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.health-modal__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.health-modal__row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.health-modal__row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.health-modal__row-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.health-modal__row-count {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 28px;
+  text-align: center;
+}
+
+.health-modal__view {
+  flex-shrink: 0;
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.health-modal__view:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.health-modal__view:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.health-modal__close {
+  width: 100%;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.health-modal__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}

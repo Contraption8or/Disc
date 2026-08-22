@@ -1,0 +1,60 @@
+/* Spill — a soft, colored glow bleeding from accent-colored elements and
+   from folder/tag/collection/theme color dots, each in its own color.
+   Two layers per glow: a brighter, tighter core plus a much softer, wider
+   bleed — closer to a neon-tube look than a flat single-blur shadow.
+   --spill-shadow / --spill-dot-shadow default to none; every element that
+   should glow already references the relevant one via
+   box-shadow: var(--spill-shadow, none) or var(--spill-dot-shadow, none),
+   so these two variables are the single switch that turns the effect on
+   everywhere at once. */
+:root {
+  --spill-shadow: none;
+  --spill-dot-shadow: none;
+}
+
+html[data-spill="on"] {
+  /* Buttons and highlights using the theme's accent color. */
+  --spill-shadow: 0 0 calc(var(--spill-intensity, 0.5) * 5px)
+      color-mix(in srgb, var(--accent) 85%, transparent),
+    0 0 calc(var(--spill-intensity, 0.5) * 30px)
+      color-mix(in srgb, var(--accent) 40%, transparent);
+
+  /* Folder/tag/collection/theme color dots — each glows in its OWN color
+     (via currentColor, set alongside every dot's background) rather than
+     the single accent color. Deliberately a smaller radius than the
+     button spill above: these are small and often densely packed
+     together (the folder list), so a restrained radius keeps
+     neighboring glows blending softly into each other at their edges
+     instead of turning into a muddy overlap. */
+  --spill-dot-shadow: 0 0 calc(var(--spill-intensity, 0.5) * 3px) currentColor,
+    0 0 calc(var(--spill-intensity, 0.5) * 14px)
+      color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Every folder/tag/collection/theme color dot or swatch across the app —
+   collected here in one place rather than touching each component's own
+   CSS file, since they all share the same currentColor-based treatment. */
+html[data-spill="on"] .batch-bar__tag-dot,
+html[data-spill="on"] .collections-panel__color-dot,
+html[data-spill="on"] .color-picker__swatch,
+html[data-spill="on"] .details-panel__tag-chip,
+html[data-spill="on"] .sidebar__dot,
+html[data-spill="on"] .sidebar__color-dot,
+html[data-spill="on"] .tag-assign-menu__dot,
+html[data-spill="on"] .tag-create-menu__swatch,
+html[data-spill="on"] .theme-switcher__swatch,
+html[data-spill="on"] .track-context-menu__dot {
+  box-shadow: var(--spill-dot-shadow, none);
+}
+
+/* Reduce motion — a single blanket override, since "disable all
+   transitions/animations" is inherently a global operation rather than
+   something that needs per-element opt-in like spill does. */
+html[data-reduce-motion="on"] *,
+html[data-reduce-motion="on"] *::before,
+html[data-reduce-motion="on"] *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}

@@ -1,0 +1,87 @@
+/* Icons render as inline SVG by default, which sits on the text baseline
+   (slightly low) unless the parent happens to be a flex container. Most
+   icon+text buttons throughout Disc aren't flex containers, so this one
+   rule keeps every icon vertically centered against its adjacent text
+   everywhere, rather than needing that fixed per-button. */
+svg {
+  vertical-align: middle;
+}
+
+/* ------------------------------------------------------------------ */
+/* Baseline interactive transitions — every button, input, and the few  */
+/* specific "state changes on click" elements fade smoothly instead of  */
+/* snapping. Deliberately excludes anything driven by rAF every frame   */
+/* (waveform progress bars) since a CSS transition there would just lag */
+/* behind real time and look wrong.                                     */
+/* ------------------------------------------------------------------ */
+button,
+input,
+select,
+textarea,
+a,
+.track-row,
+.sidebar__item,
+.sidebar__color-dot,
+.collections-panel__item,
+.collections-panel__color-dot {
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.1s ease,
+    box-shadow 0.2s ease;
+}
+
+/* Tactile press feedback. */
+button:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared entrance animations — modals get a slightly more deliberate   */
+/* scale+fade (they're a bigger context switch); small popovers         */
+/* (context menus, dropdowns, color pickers) get a quicker, lighter     */
+/* fade+slide since they're a frequent, lightweight interaction.        */
+/* ------------------------------------------------------------------ */
+@keyframes disc-backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes disc-modal-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes disc-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes disc-slide-down-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

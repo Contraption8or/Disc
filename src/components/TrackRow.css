@@ -1,0 +1,241 @@
+.track-row {
+  position: relative;
+  height: 50px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-color);
+  overflow: hidden;
+  user-select: none;
+}
+
+.track-row:hover {
+  background: var(--bg-panel);
+}
+
+.track-row--active {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.track-row--multi-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: -1px;
+}
+
+.track-row--missing {
+  opacity: 0.5;
+}
+
+.track-row--drag-over {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.track-row--dragging {
+  opacity: 0.4;
+}
+
+.track-row__grip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--text-tertiary);
+  cursor: grab;
+}
+
+.track-row__grip:hover {
+  color: var(--text-primary);
+}
+
+.track-row__grip:active {
+  cursor: grabbing;
+}
+
+.track-row--missing .track-row__waveform,
+.track-row--missing .track-row__favorite {
+  cursor: default;
+}
+
+.track-row__missing-badge {
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.track-row__play {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.track-row__play:hover {
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.track-row__play:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.track-row__play:disabled:hover {
+  background: var(--bg-panel-alt);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.track-row__waveform {
+  position: relative;
+  z-index: 0;
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  cursor: pointer;
+  overflow: hidden;
+  -webkit-user-drag: element;
+}
+
+.track-row__waveform span {
+  flex: 1;
+  background: var(--waveform);
+  border-radius: 1px;
+  min-width: 1px;
+}
+
+.track-row__bars-in {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 100%;
+  animation: track-row-waveform-in 0.25s ease-out;
+}
+
+.track-row__video-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes track-row-waveform-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.track-row__progress {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  pointer-events: none;
+  border-radius: 2px;
+}
+
+.track-row__info {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 220px;
+  width: 220px;
+  max-width: 220px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-app);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  margin: 0 -6px;
+}
+
+.track-row:hover .track-row__info {
+  background: var(--bg-panel);
+}
+
+.track-row--active .track-row__info {
+  background: color-mix(in srgb, var(--bg-panel) 94%, var(--accent) 6%);
+}
+
+.track-row__name {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-row__rename-input {
+  width: 100%;
+  max-width: 260px;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.track-row__meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-row__favorite {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+
+.track-row__favorite:hover {
+  background: var(--bg-hover);
+  color: var(--favorite);
+}
+
+.track-row__favorite--active {
+  color: var(--favorite);
+}

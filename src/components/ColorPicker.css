@@ -1,0 +1,77 @@
+.color-picker {
+  animation: disc-popover-in 0.12s ease;
+  position: fixed;
+  z-index: 100;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  width: 190px;
+}
+
+.color-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+
+.color-picker__swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  padding: 0;
+}
+
+.color-picker__swatch:hover {
+  transform: scale(1.12);
+}
+
+.color-picker__swatch--active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.color-picker__custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-color);
+}
+
+.color-picker__native {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.color-picker__hex {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.color-picker__apply {
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.color-picker__apply:hover {
+  background: var(--accent-hover);
+}

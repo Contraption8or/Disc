@@ -1,0 +1,45 @@
+@import "./themes/themes.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-active);
+  background-clip: padding-box;
+}

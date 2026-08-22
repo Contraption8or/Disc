@@ -1,0 +1,87 @@
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__dock {
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * dockview theme override — maps dockview's CSS variables onto Disc's own
+ * theme tokens so panel tabs/borders/backgrounds follow whichever theme
+ * is active. dockview occasionally renames a variable between versions;
+ * if a couple of surfaces don't pick up the theme after `npm install`,
+ * check the installed version's docs and adjust the names below.
+ */
+.dockview-theme-disc {
+  --dv-background-color: var(--bg-app);
+  --dv-group-view-background-color: var(--bg-app);
+
+  --dv-tabs-and-actions-container-background-color: var(--bg-panel);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-app);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-app);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-panel);
+  --dv-tab-background-color: var(--bg-panel);
+  --dv-tab-color: var(--text-secondary);
+
+  --dv-separator-border: var(--border-color);
+  --dv-paneview-header-border-color: var(--border-color);
+  --dv-active-sash-color: var(--accent);
+
+  --dv-icon-hover-background-color: var(--bg-hover);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  --dv-drag-over-border-color: var(--accent);
+
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.dockview-theme-disc .dv-tab {
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.dockview-theme-disc .dv-void-container {
+  background: var(--bg-app);
+}
+
+.undo-toast {
+  animation: disc-slide-down-in 0.15s ease;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  width: fit-content;
+  margin: 0 auto;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 12px 10px 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.undo-toast__button {
+  flex-shrink: 0;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.undo-toast__button:hover {
+  background: var(--accent-hover);
+}

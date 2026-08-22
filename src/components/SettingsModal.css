@@ -1,0 +1,212 @@
+.settings-modal__backdrop {
+  animation: disc-backdrop-fade-in 0.15s ease;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.settings-modal {
+  animation: disc-modal-scale-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: 380px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.settings-modal__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+}
+
+.settings-modal__label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.settings-modal__select {
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
+.settings-modal__select--inline {
+  width: auto;
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.settings-modal__select .dropdown__trigger {
+  font-size: 13px;
+}
+
+.settings-modal__select--inline .dropdown__trigger {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.settings-modal__note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--space-4) 0;
+}
+
+.settings-modal__note--top {
+  margin-top: -6px;
+  margin-bottom: var(--space-3);
+}
+
+.settings-modal__divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: var(--space-4) 0;
+}
+
+.settings-modal__progress-track {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.settings-modal__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  border-radius: var(--radius-full);
+  transition: width 0.2s ease;
+}
+
+.settings-modal__section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-3);
+}
+
+.settings-modal__toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 13px;
+  color: var(--text-primary);
+  padding: 7px 0;
+  cursor: pointer;
+}
+
+.settings-modal__toggle-row input[type="checkbox"] {
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.settings-modal__hint {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.settings-modal__slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 4px 0 var(--space-3) 0;
+}
+
+.settings-modal__slider-label {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  width: 52px;
+}
+
+.settings-modal__slider-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.settings-modal__radio-row {
+  display: flex;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+}
+
+.settings-modal__radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-modal__radio-row input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-modal__restart-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.settings-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.settings-modal__cancel,
+.settings-modal__save {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-modal__cancel {
+  background: var(--bg-panel-alt);
+  color: var(--text-secondary);
+}
+
+.settings-modal__cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-modal__save {
+  background: var(--accent);
+  box-shadow: var(--spill-shadow, none);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.settings-modal__save:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.settings-modal__save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

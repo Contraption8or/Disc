@@ -1,0 +1,28 @@
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 46px;
+  margin: 0 calc(-1 * var(--space-4)) 0 0;
+}
+
+.window-controls__button {
+  width: 44px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.window-controls__button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.window-controls__button--close:hover {
+  background: var(--danger);
+  color: #ffffff;
+}

@@ -1,0 +1,95 @@
+.titlebar {
+  height: 46px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  background: var(--titlebar-bg);
+  border-bottom: 1px solid var(--border-color);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.titlebar__mark {
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.titlebar__name {
+  font-size: 14px;
+}
+
+.titlebar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__pin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.titlebar__pin:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.titlebar__pin--active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-panel-alt));
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.titlebar__icon-button {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  position: relative;
+}
+
+.titlebar__icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.titlebar__preload-badge {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--bg-app);
+}
