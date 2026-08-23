@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, createReadStream } from "node:fs";
+import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import os from "node:os";
@@ -58,18 +58,17 @@ const watchDebounceTimers = new Map(); // key -> Timeout
 // even exists) ---------------------------------------------------------
 const settingsPath = path.join(app.getPath("userData"), "disc-settings.json");
 
-// Scratch directory for dragging a single marked section out to Premiere
-// (see src/audio/sectionDrag.js) — Disc trims + re-encodes just that
-// section's audio to a temp MP3 here so the native OS drag has a real
-// file to hand off, since it can't drag a byte range out of the original
-// file. Purely a regenerate-on-demand cache, never anything the user
-// created directly, so it's safe to wipe on every launch rather than
-// letting these tiny temp clips accumulate across sessions forever.
-const sectionTempDir = path.join(app.getPath("temp"), "disc-sections");
-try {
-  if (existsSync(sectionTempDir)) rmSync(sectionTempDir, { recursive: true, force: true });
-} catch {
-  // Non-fatal — worst case a handful of stale temp files stick around.
+// Where a marked section's trimmed clip lives for dragging out to Premiere
+// (see src/audio/sectionDrag.js) — a ".disc-sections" subfolder right next
+// to the source track itself, not a temp directory. It used to live under
+// the OS temp dir and get wiped on every launch, which meant a clip
+// already sitting in a Premiere project would go offline as soon as Disc
+// (or the OS) cleared temp — dragging into a timeline expects that file to
+// keep existing. Named with a leading dot, and explicitly skipped by the
+// folder scanner below, so it never shows up as a real library track.
+const SECTIONS_DIR_NAME = ".disc-sections";
+function sectionsDirFor(trackFilePath) {
+  return path.join(path.dirname(trackFilePath), SECTIONS_DIR_NAME);
 }
 
 function loadSettings() {
@@ -537,6 +536,10 @@ async function scanForMp3s(rootDir) {
       const fullPath = path.join(currentDir, entry.name);
       const fileType = entry.isFile() ? getFileType(entry.name) : null;
       if (entry.isDirectory()) {
+        // Marked-section clips (see sectionsDirFor above) live right next
+        // to their source track, inside a folder a normal scan would
+        // otherwise happily walk into and list as real library tracks.
+        if (entry.name === SECTIONS_DIR_NAME) continue;
         await walk(fullPath);
       } else if (fileType) {
         let sizeBytes = 0;
@@ -635,6 +638,7 @@ ipcMain.handle("disc:scan-for-convertible", async (_event, rootDir) => {
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
+        if (entry.name === SECTIONS_DIR_NAME) continue;
         await walk(fullPath);
       } else if (entry.isFile()) {
         const ext = entry.name.toLowerCase().split(".").pop();
@@ -667,23 +671,57 @@ ipcMain.handle("disc:write-converted-mp3", async (_event, { destFolder, fileName
   }
 });
 
-// Writes a trimmed marked-section clip to the scratch temp directory
-// above, for dragging just that section into Premiere. Unlike
-// disc:write-converted-mp3 (which writes into the user's real music
-// folders and must never silently clobber something), this is a
-// disposable, regenerate-on-demand cache — it always overwrites, and
-// path.basename() strips any directory components from the renderer-
-// supplied name so a write can never land outside sectionTempDir.
-ipcMain.handle("disc:write-temp-audio", async (_event, { fileName, bytes }) => {
+// Writes a trimmed marked-section clip into the source track's own
+// .disc-sections folder (created on first use), for dragging just that
+// section into Premiere. Unlike disc:write-converted-mp3 (which writes
+// user-facing files into a linked library folder and must never silently
+// clobber something), this always overwrites — it's keyed by the
+// section's own id (see sectionFileName in src/audio/sectionDrag.js), so
+// re-rendering the same section is expected to replace its own file, not
+// collide with anything else. path.basename() strips any directory
+// components from the renderer-supplied name so a write can never land
+// outside the intended folder.
+ipcMain.handle("disc:write-section-audio", async (_event, { trackFilePath, fileName, bytes }) => {
   try {
-    if (!existsSync(sectionTempDir)) mkdirSync(sectionTempDir, { recursive: true });
+    const dir = sectionsDirFor(trackFilePath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const safeName = path.basename(String(fileName || "section.mp3"));
-    const destPath = path.join(sectionTempDir, safeName);
+    const destPath = path.join(dir, safeName);
     await fs.writeFile(destPath, Buffer.from(bytes));
     return { success: true, path: destPath };
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// Lets the renderer skip re-trimming/re-encoding a section clip that's
+// already sitting on disk from a previous session — now that these
+// persist instead of living in a wiped-on-launch temp dir, there's no
+// reason to redo that work every time Disc restarts.
+ipcMain.handle("disc:section-audio-exists", async (_event, { trackFilePath, fileName }) => {
+  const safeName = path.basename(String(fileName || ""));
+  const destPath = path.join(sectionsDirFor(trackFilePath), safeName);
+  try {
+    await fs.access(destPath);
+    return { exists: true, path: destPath };
+  } catch {
+    return { exists: false, path: destPath };
+  }
+});
+
+// Removes one section's clip — called when its marked section is deleted
+// in Disc, so .disc-sections doesn't just accumulate orphaned files
+// forever. Best-effort: a clip that was never actually dragged (so never
+// rendered) simply won't exist, which is fine.
+ipcMain.handle("disc:delete-section-audio", async (_event, { trackFilePath, fileName }) => {
+  const safeName = path.basename(String(fileName || ""));
+  const destPath = path.join(sectionsDirFor(trackFilePath), safeName);
+  try {
+    await fs.unlink(destPath);
+  } catch {
+    // Already gone, or never existed — nothing to do.
+  }
+  return { success: true };
 });
 
 // Renames a track's actual file on disk, keeping its original extension

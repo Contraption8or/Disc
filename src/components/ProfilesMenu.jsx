@@ -75,6 +75,21 @@ export default function ProfilesMenu() {
     setSwitchTarget(null);
   }
 
+  // Overwrites a saved profile's data with whatever's currently active,
+  // keeping its existing file (and thus its name) — the same "update in
+  // place" idea as Layout presets' "Update with Current Layout". Passing
+  // the existing fileName through to saveProfile is what makes this an
+  // overwrite instead of creating a new profile.
+  async function handleUpdateProfile(fileName, profileName) {
+    if (!window.disc) return;
+    const data = collectProfileData();
+    const result = await window.disc.saveProfile(profileName, data, fileName);
+    if (result?.success) {
+      flashStatus("Updated");
+      refreshProfiles();
+    }
+  }
+
   async function handleRename(fileName, newName) {
     setEditingFileName(null);
     const trimmed = newName.trim();
@@ -167,6 +182,13 @@ export default function ProfilesMenu() {
                       title="Switch to this profile"
                     >
                       {p.profileName}
+                    </button>
+                    <button
+                      className="profiles-menu__icon-btn"
+                      title="Update with current settings"
+                      onClick={() => handleUpdateProfile(p.fileName, p.profileName)}
+                    >
+                      <Icon name="convert" size={12} />
                     </button>
                     <button
                       className="profiles-menu__icon-btn"

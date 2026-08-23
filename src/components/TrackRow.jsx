@@ -111,8 +111,8 @@ function TrackRow({
   // clips for the entire library up front.
   useEffect(() => {
     if (isMissing || isVideo || !waveformData) return;
-    (trackSections[track.id] || []).forEach((section, i) =>
-      prepareSectionDrag(track, section, i).catch((err) =>
+    (trackSections[track.id] || []).forEach((section) =>
+      prepareSectionDrag(track, section).catch((err) =>
         console.error("Couldn't prepare section for drag:", err)
       )
     );
@@ -192,8 +192,8 @@ function TrackRow({
   // synchronously from that event, and trimming+encoding isn't instant.
   function handleWaveformMouseEnter() {
     if (isMissing || isVideo) return;
-    (trackSections[track.id] || []).forEach((section, i) =>
-      prepareSectionDrag(track, section, i).catch((err) =>
+    (trackSections[track.id] || []).forEach((section) =>
+      prepareSectionDrag(track, section).catch((err) =>
         console.error("Couldn't prepare section for drag:", err)
       )
     );

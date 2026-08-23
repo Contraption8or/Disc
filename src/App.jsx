@@ -32,6 +32,7 @@ import { loadTags, saveTags, loadTrackTags, saveTrackTags } from "./tags/tagStor
 import { loadTrackNotes, saveTrackNotes } from "./notes/noteStorage.js";
 import { loadTrackOverrides, saveTrackOverrides } from "./audio/overrideStorage.js";
 import { loadTrackSections, saveTrackSections } from "./audio/sectionStorage.js";
+import { deleteSectionDrag } from "./audio/sectionDrag.js";
 import { loadCollections, saveCollections } from "./collections/collectionStorage.js";
 import { toMediaUrl } from "./utils/paths.js";
 import { loadShortcuts, saveShortcuts, DEFAULT_SHORTCUTS } from "./shortcuts/shortcutStorage.js";
@@ -614,6 +615,10 @@ export default function App() {
       else next[trackId] = remaining;
       return next;
     });
+    // trackId is the track's file path (true everywhere in Disc), which is
+    // all deleteSectionDrag needs — best-effort, so a clip that was never
+    // actually dragged (never rendered to disk) simply has nothing to clean up.
+    deleteSectionDrag(trackId, sectionId);
   }, []);
 
   // --- Collections (virtual groupings, independent of any real folder) --

@@ -29,13 +29,13 @@ const KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
 // beat the render, though: dragstart checks whether the file is actually
 // ready and just cancels the drag (falling back to a normal click) if not,
 // same veto pattern TrackRow uses for its own drag-out.
-function SectionRow({ track, section, index, label, onJump, onDelete }) {
+function SectionRow({ track, section, label, onJump, onDelete }) {
   const [ready, setReady] = useState(() => Boolean(getSectionDragPath(track, section)));
   const pathRef = useRef(getSectionDragPath(track, section));
 
   function ensurePrepared() {
     if (pathRef.current) return;
-    prepareSectionDrag(track, section, index)
+    prepareSectionDrag(track, section)
       .then((path) => {
         pathRef.current = path;
         setReady(true);
@@ -461,7 +461,6 @@ export default function DetailsPanel() {
                     key={section.id}
                     track={track}
                     section={section}
-                    index={i}
                     label={`${i + 1}. ${formatDuration(section.startFraction * dur)} → ${formatDuration(
                       section.endFraction * dur
                     )}`}

@@ -55,8 +55,12 @@ contextBridge.exposeInMainWorld("disc", {
   scanForConvertible: (rootDir) => ipcRenderer.invoke("disc:scan-for-convertible", rootDir),
   writeConvertedMp3: (destFolder, fileName, bytes) =>
     ipcRenderer.invoke("disc:write-converted-mp3", { destFolder, fileName, bytes }),
-  writeTempAudio: (fileName, bytes) =>
-    ipcRenderer.invoke("disc:write-temp-audio", { fileName, bytes }),
+  writeSectionAudio: (trackFilePath, fileName, bytes) =>
+    ipcRenderer.invoke("disc:write-section-audio", { trackFilePath, fileName, bytes }),
+  sectionAudioExists: (trackFilePath, fileName) =>
+    ipcRenderer.invoke("disc:section-audio-exists", { trackFilePath, fileName }),
+  deleteSectionAudio: (trackFilePath, fileName) =>
+    ipcRenderer.invoke("disc:delete-section-audio", { trackFilePath, fileName }),
   relaunchApp: () => ipcRenderer.send("disc:relaunch"),
   listProfiles: () => ipcRenderer.invoke("disc:list-profiles"),
   saveProfile: (profileName, data, fileName) =>
