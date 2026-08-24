@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePomodoro } from "../context/PomodoroContext.jsx";
 import Icon from "./Icon.jsx";
 import "./PomodoroPanel.css";
@@ -31,6 +31,12 @@ export default function PomodoroPanel() {
   } = usePomodoro();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [popupOpen, setPopupOpen] = useState(false);
+
+  useEffect(() => {
+    window.disc?.isPomodoroWindowOpen().then(setPopupOpen);
+    return window.disc?.onPomodoroWindowState(setPopupOpen);
+  }, []);
 
   const totalSeconds =
     phase === "work"
@@ -47,13 +53,26 @@ export default function PomodoroPanel() {
         <span className={`pomodoro-panel__phase pomodoro-panel__phase--${phase}`}>
           {PHASE_LABELS[phase]}
         </span>
-        <button
-          className="pomodoro-panel__gear"
-          title="Timer settings"
-          onClick={() => setSettingsOpen((v) => !v)}
-        >
-          <Icon name="gear" size={13} />
-        </button>
+        <div className="pomodoro-panel__header-actions">
+          <button
+            className={"pomodoro-panel__gear" + (popupOpen ? " pomodoro-panel__gear--active" : "")}
+            title={
+              popupOpen
+                ? "Close the floating timer window"
+                : "Open a small floating timer window — can be pinned on top of other windows"
+            }
+            onClick={() => window.disc?.togglePomodoroWindow()}
+          >
+            <Icon name="windowRestore" size={13} />
+          </button>
+          <button
+            className="pomodoro-panel__gear"
+            title="Timer settings"
+            onClick={() => setSettingsOpen((v) => !v)}
+          >
+            <Icon name="gear" size={13} />
+          </button>
+        </div>
       </div>
 
       {!settingsOpen ? (

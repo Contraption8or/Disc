@@ -36,6 +36,13 @@
   box-shadow: none;
 }
 
+.pomodoro-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .pomodoro-panel__gear {
   background: var(--bg-panel-alt);
   border: 1px solid var(--border-color);
@@ -51,6 +58,12 @@
 
 .pomodoro-panel__gear:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.pomodoro-panel__gear--active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel-alt));
+  border-color: var(--accent);
   color: var(--text-primary);
 }
 

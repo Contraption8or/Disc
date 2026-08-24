@@ -1,0 +1,228 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-app);
+}
+
+.pomodoro-popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  box-sizing: border-box;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  user-select: none;
+}
+
+.pomodoro-popup__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  -webkit-app-region: drag;
+}
+
+.pomodoro-popup__title {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pomodoro-popup__phase {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pomodoro-popup__phase--shortBreak,
+.pomodoro-popup__phase--longBreak {
+  color: var(--text-primary);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+}
+
+.pomodoro-popup__pin,
+.pomodoro-popup__close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  -webkit-app-region: no-drag;
+}
+
+.pomodoro-popup__pin:hover,
+.pomodoro-popup__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.pomodoro-popup__pin--active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel-alt));
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.pomodoro-popup__close:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.pomodoro-popup__waiting {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin-top: 20px;
+}
+
+.pomodoro-popup__ring-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin-bottom: 12px;
+}
+
+.pomodoro-popup__ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.pomodoro-popup__ring-track,
+.pomodoro-popup__ring-progress {
+  fill: none;
+  stroke-width: 8;
+}
+
+.pomodoro-popup__ring-track {
+  stroke: var(--bg-panel-alt);
+}
+
+.pomodoro-popup__ring-progress {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.pomodoro-popup__time {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.pomodoro-popup__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pomodoro-popup__primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pomodoro-popup__primary:hover {
+  background: var(--accent-hover);
+}
+
+.pomodoro-popup__secondary {
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pomodoro-popup__secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.pomodoro-popup__settings {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.pomodoro-popup__setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.pomodoro-popup__setting-row input[type="number"] {
+  width: 48px;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 11px;
+  text-align: right;
+}
+
+.pomodoro-popup__setting-row--toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.pomodoro-popup__settings-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pomodoro-popup__settings-actions .pomodoro-popup__primary {
+  flex: 1;
+}

@@ -7,6 +7,12 @@ import {
 
 const PomodoroContext = createContext(null);
 
+// Lets the floating Pomodoro window (see PomodoroPopup.jsx) stay in sync
+// with the real timer, which only ever runs here — that popup is a pure
+// remote display/control, never a second independent ticking timer, so
+// there's nothing to reconcile between two clocks drifting apart.
+export const POMODORO_CHANNEL_NAME = "disc-pomodoro-sync";
+
 export function usePomodoro() {
   const ctx = useContext(PomodoroContext);
   if (!ctx) throw new Error("usePomodoro must be used within PomodoroProvider");
@@ -132,6 +138,49 @@ export function PomodoroProvider({ children }) {
   const resetToDefaults = useCallback(() => {
     setSettings({ ...DEFAULT_POMODORO_SETTINGS });
   }, []);
+
+  // Kept current every render so the message handler below (set up once,
+  // in a mount-only effect) always calls the latest versions of these —
+  // same stale-closure-avoidance pattern as phaseRef/completedRef above,
+  // just for functions instead of raw values.
+  const actionsRef = useRef({ start, pause, toggle, reset, skip, updateSettings, resetToDefaults });
+  actionsRef.current = { start, pause, toggle, reset, skip, updateSettings, resetToDefaults };
+  const stateRef = useRef(null);
+  stateRef.current = { phase, secondsLeft, isRunning, completedWorkSessions, settings };
+
+  function broadcastState(channel) {
+    channel.postMessage({ type: "state", ...stateRef.current });
+  }
+
+  // The actual cross-window sync: broadcast this window's state on every
+  // change (the popup has no ticking timer of its own, so it only ever
+  // knows what it's told), reply immediately if the popup asks for a
+  // snapshot (it does this on mount, so opening the popup after the timer
+  // was already running doesn't mean waiting up to a second for the next
+  // natural tick), and act on any command the popup sends back — its
+  // buttons don't run start/pause/etc locally, they broadcast a command
+  // and wait for the resulting state broadcast, same as if you'd clicked
+  // the button here.
+  const channelRef = useRef(null);
+  useEffect(() => {
+    const channel = new BroadcastChannel(POMODORO_CHANNEL_NAME);
+    channelRef.current = channel;
+    channel.onmessage = (e) => {
+      const msg = e.data;
+      if (msg?.type === "request-state") {
+        broadcastState(channel);
+        return;
+      }
+      if (msg?.type !== "command") return;
+      const action = actionsRef.current[msg.action];
+      if (typeof action === "function") action(msg.payload);
+    };
+    return () => channel.close();
+  }, []);
+
+  useEffect(() => {
+    if (channelRef.current) broadcastState(channelRef.current);
+  }, [phase, secondsLeft, isRunning, completedWorkSessions, settings]);
 
   const value = {
     settings,

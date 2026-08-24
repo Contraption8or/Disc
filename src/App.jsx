@@ -60,12 +60,15 @@ export default function App() {
     const isValid =
       THEMES.some((t) => t.id === saved) || loadCustomThemes().some((t) => t.id === saved);
     if (isValid) return saved;
-    // Only real case this hits today: someone had "premiere-light"
-    // (removed) saved as their active theme. Migrating to "paper" (the
-    // closest match in spirit — also a light theme) rather than
-    // DEFAULT_THEME avoids unexpectedly dumping someone who deliberately
-    // chose a light theme into a dark one on their next launch.
-    return saved === "premiere-light" ? "paper" : DEFAULT_THEME;
+    // "premiere-light" and "mist" (both removed) migrate to "paper" — the
+    // one remaining light theme, and the closest match in spirit for
+    // either — rather than DEFAULT_THEME, so no one who deliberately chose
+    // a light theme gets unexpectedly dumped into a dark one. "frost"
+    // (renamed to "tron") migrates straight across — same theme, just a
+    // new id/label.
+    if (saved === "premiere-light" || saved === "mist") return "paper";
+    if (saved === "frost") return "tron";
+    return DEFAULT_THEME;
   });
   const [pinned, setPinned] = useState(false);
   const [musicFolderPath, setMusicFolderPath] = useState(
@@ -1085,6 +1088,26 @@ export default function App() {
     if (!ids || ids.length === 0) return;
     const nextIndex = index + 1;
     if (nextIndex >= ids.length) {
+      // With Shuffle on, reaching the end of the queue doesn't stop
+      // playback — it reshuffles the same set of tracks into a fresh
+      // order and keeps going, so a shuffled playlist can run
+      // indefinitely instead of playing through once and falling silent.
+      // Same anti-repeat swap as starting a fresh shuffle: the track that
+      // just finished shouldn't immediately come up again as the very
+      // next one.
+      if (shuffleEnabled) {
+        const reshuffled = shuffleArray(ids);
+        const justPlayedId = ids[index];
+        if (reshuffled.length > 1 && reshuffled[0] === justPlayedId) {
+          [reshuffled[0], reshuffled[1]] = [reshuffled[1], reshuffled[0]];
+        }
+        queueRef.current = { ids: reshuffled, index: 0 };
+        setQueueTrackIds(reshuffled);
+        setQueueIndex(0);
+        const track = allTracksRef.current.find((t) => t.id === reshuffled[0]);
+        if (track) loadAndPlay(track, 0);
+        return;
+      }
       queueRef.current = { ids: [], index: -1 };
       setQueueTrackIds([]);
       setQueueIndex(-1);
@@ -1094,7 +1117,7 @@ export default function App() {
     queueRef.current = { ids, index: nextIndex };
     setQueueIndex(nextIndex);
     if (nextTrack) loadAndPlay(nextTrack, 0);
-  }, [loadAndPlay]);
+  }, [loadAndPlay, shuffleEnabled]);
 
   const handlePlayPrev = useCallback(() => {
     const { ids, index } = queueRef.current;
@@ -1684,6 +1707,8 @@ export default function App() {
       onToggleShuffle: handleToggleShuffle,
       analysisTick,
       onAnalysisUpdated: handleAnalysisUpdated,
+      volume,
+      onVolumeChange: setVolume,
     }),
     [
       musicFolderPath,
@@ -1776,6 +1801,8 @@ export default function App() {
       handleToggleShuffle,
       analysisTick,
       handleAnalysisUpdated,
+      volume,
+      setVolume,
     ]
   );
 

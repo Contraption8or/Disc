@@ -67,6 +67,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow = null;
+let pomodoroWindow = null; // the standalone floating Pomodoro widget — see createPomodoroWindow
 let normalBounds = null; // remembered so we can restore after compact mode
 const folderWatchers = new Map(); // key -> FSWatcher
 const watchDebounceTimers = new Map(); // key -> Timeout
@@ -140,15 +141,37 @@ const dragIcon = nativeImage.createFromPath(
 // title bar entirely, themed to match whatever theme is active.
 Menu.setApplicationMenu(null);
 
+// Several themes' (Tron, Sunset, Emerald, Abyss, Ember, Midnight, Blush)
+// blurred-desktop background is real Windows 11 Mica/Acrylic
+// (win.backgroundMaterial), not a CSS trick — CSS backdrop-filter can only
+// blur other content already rendered inside the page, it has no way to
+// reach the actual desktop/other windows behind a transparent Electron
+// window, which is what "blur what's behind it" actually requires.
+// backgroundMaterial is a Windows-11-only, constructor-time-only option (no
+// supported way to flip it on a live window), so switching to one of these
+// themes needs a restart to take visual effect — same "changes a startup
+// flag, needs a relaunch" pattern already used for the memory-limit and
+// CPU-thread settings above.
+const useAcrylic = process.platform === "win32" && Boolean(startupSettings.useAcrylic);
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 760,
     minHeight: 480,
-    backgroundColor: "#1b1b1f",
+    // A fully-opaque backgroundColor would paint over the acrylic material
+    // before Disc's own (semi-transparent, for these themes) CSS
+    // backgrounds ever get a chance to show it through. transparent:true is
+    // what actually makes Chromium preserve alpha when compositing the
+    // page — without it, the renderer assumes an opaque surface and the
+    // whole page effectively fails to paint over the native material
+    // instead of blending with it (shows up as a real blurred backdrop
+    // with the entire Disc UI missing).
+    backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
     title: "Disc",
     frame: false,
+    ...(useAcrylic ? { backgroundMaterial: "acrylic", transparent: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -174,6 +197,54 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    // Without this, closing the main window while the floating Pomodoro
+    // popup is still open would leave Disc running as an orphaned little
+    // timer widget with no way back to the real app — no tray icon, no
+    // menu, nothing to reopen it from.
+    pomodoroWindow?.close();
+  });
+}
+
+// A small, standalone, always-on-top-capable window that shows just the
+// Pomodoro timer — for keeping it visible over whatever else is on screen
+// without needing the whole Disc window open. It loads the exact same
+// renderer bundle as the main window, just with a query flag the React
+// entrypoint checks to render PomodoroPopup instead of the full app (see
+// src/main.jsx) — the timer itself keeps running in the main window's
+// PomodoroProvider either way; this window is a synced remote display/
+// control, not a second independent timer (see the BroadcastChannel setup
+// in PomodoroContext.jsx).
+function createPomodoroWindow() {
+  if (pomodoroWindow) {
+    pomodoroWindow.focus();
+    return;
+  }
+  pomodoroWindow = new BrowserWindow({
+    width: 220,
+    height: 260,
+    minWidth: 180,
+    minHeight: 220,
+    backgroundColor: "#1b1b1f",
+    title: "Disc — Pomodoro",
+    frame: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (isDev) {
+    pomodoroWindow.loadURL("http://localhost:5173/?pomodoroWindow=1");
+  } else {
+    pomodoroWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
+      search: "pomodoroWindow=1",
+    });
+  }
+
+  pomodoroWindow.on("closed", () => {
+    pomodoroWindow = null;
+    mainWindow?.webContents.send("disc:pomodoro-window-state", false);
   });
 }
 
@@ -303,6 +374,29 @@ ipcMain.handle("disc:set-thread-pool-size", (_event, threadPoolSize) => {
 ipcMain.handle("disc:get-cpu-count", () => {
   return os.cpus().length;
 });
+
+// Acrylic-backed themes' background — same read/write-persisted-value,
+// relaunch-to-apply pattern as memory limit and CPU threads above.
+// win32-gated since backgroundMaterial has no effect (and these themes
+// would otherwise just look like a plain dark window) on any other
+// platform.
+ipcMain.handle("disc:get-acrylic-enabled", () => {
+  return process.platform === "win32" && Boolean(loadSettings().useAcrylic);
+});
+
+ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
+  const settings = loadSettings();
+  if (enabled) settings.useAcrylic = true;
+  else delete settings.useAcrylic;
+  saveSettings(settings);
+  return true;
+});
+
+// Whether *this already-running* window was actually created with the
+// acrylic material — distinct from the saved preference above, which may
+// have just been changed and not yet take effect. Lets the renderer only
+// bother prompting for a restart when one would actually change anything.
+ipcMain.handle("disc:is-acrylic-window-active", () => useAcrylic);
 
 ipcMain.handle("disc:get-app-version", () => {
   return app.getVersion();
@@ -520,6 +614,33 @@ ipcMain.handle("disc:toggle-always-on-top", (_event, shouldPin) => {
   if (!mainWindow) return false;
   mainWindow.setAlwaysOnTop(shouldPin, "floating");
   return mainWindow.isAlwaysOnTop();
+});
+
+// Opens/closes the floating Pomodoro widget (see createPomodoroWindow
+// above). A toggle rather than separate open/close channels since the
+// only caller is a single button whose label already reflects state.
+ipcMain.on("disc:toggle-pomodoro-window", () => {
+  if (pomodoroWindow) {
+    pomodoroWindow.close(); // "closed" handler above notifies the main window
+  } else {
+    createPomodoroWindow();
+    mainWindow?.webContents.send("disc:pomodoro-window-state", true);
+  }
+});
+
+ipcMain.handle("disc:is-pomodoro-window-open", () => Boolean(pomodoroWindow));
+
+// The Pomodoro window's own "pin on top" — separate from the main
+// window's, since the whole point of this widget is being pinnable
+// independently of whether the main Disc window is pinned at all.
+ipcMain.handle("disc:toggle-pomodoro-always-on-top", (_event, shouldPin) => {
+  if (!pomodoroWindow) return false;
+  pomodoroWindow.setAlwaysOnTop(shouldPin, "floating");
+  return pomodoroWindow.isAlwaysOnTop();
+});
+
+ipcMain.on("disc:pomodoro-window-close", () => {
+  pomodoroWindow?.close();
 });
 
 // Window controls — needed because the window is frameless so Disc can
@@ -1052,12 +1173,12 @@ ipcMain.on("disc:enter-compact-mode", () => {
   normalBounds = mainWindow.getBounds();
 
   const width = 400;
-  const height = 96;
+  const height = 136;
   const workArea = screen.getPrimaryDisplay().workArea;
   const x = workArea.x + workArea.width - width - 16;
   const y = workArea.y + workArea.height - height - 16;
 
-  mainWindow.setMinimumSize(360, 90);
+  mainWindow.setMinimumSize(360, 130);
   mainWindow.setBounds({ x, y, width, height });
 });
 

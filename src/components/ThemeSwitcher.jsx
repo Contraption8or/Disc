@@ -10,7 +10,28 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
   const [modalTarget, setModalTarget] = useState(null); // null | "new" | customTheme
   const [themeContextMenu, setThemeContextMenu] = useState(null); // { x, y, theme } | null
   const [customThemes, setCustomThemes] = useState(loadCustomThemes);
+  const [acrylicRestartNeeded, setAcrylicRestartNeeded] = useState(false);
   const rootRef = useRef(null);
+
+  // A handful of themes (Tron, Sunset, Emerald, Abyss, Ember, Midnight,
+  // Blush — see
+  // requiresAcrylic in themes.js) use translucent panels that only
+  // actually show a blurred desktop through real Windows 11 Mica (see
+  // electron/main.js) — a startup-time window setting, so switching to
+  // one persists the preference right away but can't visually take effect
+  // until the window is recreated. isAcrylicWindowActive reflects what
+  // *this* running window actually has, so switching between two
+  // acrylic-backed themes (or back to one after a restart already turned
+  // it on) doesn't nag for a restart that wouldn't change anything.
+  useEffect(() => {
+    const needsAcrylic = Boolean(THEMES.find((t) => t.id === theme)?.requiresAcrylic);
+    window.disc?.setAcrylicEnabled(needsAcrylic);
+    if (!needsAcrylic) {
+      setAcrylicRestartNeeded(false);
+      return;
+    }
+    window.disc?.isAcrylicWindowActive().then((active) => setAcrylicRestartNeeded(!active));
+  }, [theme]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -75,6 +96,26 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
         />
         <span>{active.label}</span>
       </button>
+
+      {acrylicRestartNeeded && (
+        <div className="theme-switcher__restart-banner">
+          <span>Restart Disc for this theme's blur to activate</span>
+          <div className="theme-switcher__restart-actions">
+            <button
+              className="theme-switcher__restart-later"
+              onClick={() => setAcrylicRestartNeeded(false)}
+            >
+              Later
+            </button>
+            <button
+              className="theme-switcher__restart-now"
+              onClick={() => window.disc?.relaunchApp()}
+            >
+              Restart Now
+            </button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="theme-switcher__menu">

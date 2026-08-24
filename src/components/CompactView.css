@@ -42,6 +42,9 @@
   flex-shrink: 0;
   width: 26px;
   height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-panel-alt);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -53,6 +56,12 @@
 
 .compact-view__exit:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.compact-view__exit--active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel-alt));
+  border-color: var(--accent);
   color: var(--text-primary);
 }
 
@@ -85,4 +94,76 @@
 
 .compact-view__result:hover {
   background: var(--bg-hover);
+}
+
+.compact-view__folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.compact-view__folder-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-view__folder-select .dropdown__trigger {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.compact-view__folder-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.compact-view__folder-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.compact-view__folder-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.compact-view__folder-btn--active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel-alt));
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.compact-view__volume-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.compact-view__volume-popover {
+  animation: disc-popover-in 0.12s ease;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.compact-view__volume-slider {
+  width: 110px;
+  accent-color: var(--accent);
 }

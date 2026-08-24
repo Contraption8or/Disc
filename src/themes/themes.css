@@ -48,20 +48,62 @@
 /* purple: dark warm-toned surfaces, vibrant red-to-peach accent      */
 /* ---------------------------------------------------------------- */
 [data-theme="sunset"] {
-  --bg-app: #120e0e;
-  --bg-panel: #1c1514;
-  --bg-panel-alt: #241b19;
-  --bg-hover: #2e2220;
-  --bg-active: #382a27;
-  --border-color: #332523;
+  --bg-app: rgba(10, 6, 6, 0.55);
+  --bg-panel: rgba(7, 4, 4, 0.94);
+  --bg-panel-alt: rgba(11, 6, 6, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #fcf1ee;
   --text-secondary: #c2a39f;
   --text-tertiary: #92746f;
   --accent: #f64668;
   --accent-hover: #fe9677;
   --accent-text: #1f0a0a;
-  --waveform: #57423f;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #f64668, #fe9677);
+}
+
+/* ---------------------------------------------------------------- */
+/* Tron — dark glass. Every background var below is translucent, on  */
+/* purpose: with real Windows 11 Mica behind the window (see          */
+/* electron/main.js), that translucency is what actually lets the     */
+/* blurred desktop show through every panel rather than just around   */
+/* the edges. Kept deliberately restrained — one soft dark tint, one   */
+/* accent, no extra colors competing with whatever's blurring behind   */
+/* it — so it reads as clean glass, not a busy stained-glass window.   */
+/* Text stays high-contrast regardless, since it has to stay readable  */
+/* against literally whatever the user has open behind Disc.          */
+/* ---------------------------------------------------------------- */
+[data-theme="tron"] {
+  /* --bg-panel/--bg-panel-alt (below) are what every actual panel surface
+     uses, and they're already opaque enough on their own to read as dark
+     glass. --bg-app is different: it's what dockview's own group-view
+     background resolves to *underneath* every panel, and — critically —
+     it's also the one thing the title bar's background derives from
+     (--titlebar-bg further down in this file is a color-mix of --bg-app
+     toward black). Since dockview panels tile edge-to-edge with no gaps,
+     --bg-app is never visible under a panel regardless of its own alpha —
+     but the title bar has no panel covering it, so if --bg-app were fully
+     transparent, the title bar would show almost raw, barely-tinted
+     acrylic (which is exactly what was showing up as a flat, undertinted
+     patch). A real dark tint here fixes the title bar without touching
+     panels at all, since they never actually show --bg-app underneath
+     them to begin with. */
+  --bg-app: rgba(0, 0, 0, 0.55);
+  --bg-panel: rgba(2, 2, 4, 0.94);
+  --bg-panel-alt: rgba(6, 7, 9, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
+  --text-primary: #f3f4f8;
+  --text-secondary: #b7bac4;
+  --text-tertiary: #858893;
+  --accent: #ff4d5e;
+  --accent-hover: #ff6b7a;
+  --accent-text: #2a0a0e;
+  --waveform: rgba(255, 255, 255, 0.28);
+  --waveform-progress: var(--accent);
 }
 
 /* ---------------------------------------------------------------- */
@@ -88,19 +130,19 @@
 /* Emerald — dark, deep green surfaces, vivid emerald accent         */
 /* ---------------------------------------------------------------- */
 [data-theme="emerald"] {
-  --bg-app: #0d1512;
-  --bg-panel: #16211c;
-  --bg-panel-alt: #1c2a23;
-  --bg-hover: #24352c;
-  --bg-active: #2c4034;
-  --border-color: #2a3a31;
+  --bg-app: rgba(0, 10, 4, 0.55);
+  --bg-panel: rgba(4, 8, 6, 0.94);
+  --bg-panel-alt: rgba(7, 12, 9, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #eaf5ee;
   --text-secondary: #9dbfa9;
   --text-tertiary: #6f8f7c;
   --accent: #34d399;
   --accent-hover: #6ee7b7;
   --accent-text: #052e1c;
-  --waveform: #3f5a4a;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #34d399, #6ee7b7);
 }
 
@@ -108,19 +150,19 @@
 /* Abyss — dark, deep ocean-teal surfaces, bright cyan accent        */
 /* ---------------------------------------------------------------- */
 [data-theme="abyss"] {
-  --bg-app: #0a1418;
-  --bg-panel: #101f25;
-  --bg-panel-alt: #15262d;
-  --bg-hover: #1c323a;
-  --bg-active: #223d46;
-  --border-color: #203039;
+  --bg-app: rgba(0, 8, 10, 0.55);
+  --bg-panel: rgba(3, 8, 10, 0.94);
+  --bg-panel-alt: rgba(5, 12, 15, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #e6f4f7;
   --text-secondary: #94b8c2;
   --text-tertiary: #698d97;
   --accent: #22d3ee;
   --accent-hover: #67e8f9;
   --accent-text: #062a30;
-  --waveform: #34535d;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #22d3ee, #67e8f9);
 }
 
@@ -128,19 +170,19 @@
 /* Ember — dark, warm charcoal-brown surfaces, copper/amber accent   */
 /* ---------------------------------------------------------------- */
 [data-theme="ember"] {
-  --bg-app: #161009;
-  --bg-panel: #211810;
-  --bg-panel-alt: #2a1e14;
-  --bg-hover: #362819;
-  --bg-active: #42301c;
-  --border-color: #382a1c;
+  --bg-app: rgba(10, 5, 0, 0.55);
+  --bg-panel: rgba(9, 6, 3, 0.94);
+  --bg-panel-alt: rgba(13, 9, 5, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #fbeee0;
   --text-secondary: #cba883;
   --text-tertiary: #9c7c5c;
   --accent: #f0a04b;
   --accent-hover: #f7bd7a;
   --accent-text: #2b1704;
-  --waveform: #5c452f;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #f0a04b, #f7bd7a);
 }
 
@@ -148,19 +190,19 @@
 /* Midnight — dark, deep indigo surfaces, periwinkle-indigo accent   */
 /* ---------------------------------------------------------------- */
 [data-theme="midnight"] {
-  --bg-app: #0d0e1a;
-  --bg-panel: #151726;
-  --bg-panel-alt: #1b1e30;
-  --bg-hover: #24273d;
-  --bg-active: #2c3049;
-  --border-color: #292c42;
+  --bg-app: rgba(0, 0, 10, 0.55);
+  --bg-panel: rgba(4, 4, 9, 0.94);
+  --bg-panel-alt: rgba(6, 7, 13, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #e9eafc;
   --text-secondary: #a3a6cc;
   --text-tertiary: #74779e;
   --accent: #6366f1;
   --accent-hover: #818cf8;
   --accent-text: #0c0e2b;
-  --waveform: #3b3d5c;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #6366f1, #818cf8);
 }
 
@@ -168,19 +210,19 @@
 /* Blush — dark, deep plum-wine surfaces, vivid rose-pink accent     */
 /* ---------------------------------------------------------------- */
 [data-theme="blush"] {
-  --bg-app: #170e14;
-  --bg-panel: #23151e;
-  --bg-panel-alt: #2c1a25;
-  --bg-hover: #38222f;
-  --bg-active: #442a3a;
-  --border-color: #3a2531;
+  --bg-app: rgba(10, 0, 6, 0.55);
+  --bg-panel: rgba(9, 3, 6, 0.94);
+  --bg-panel-alt: rgba(13, 5, 10, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #fbecf4;
   --text-secondary: #cd9fb8;
   --text-tertiary: #9c7690;
   --accent: #ec4899;
   --accent-hover: #f472b6;
   --accent-text: #2c0619;
-  --waveform: #5c3c4e;
+  --waveform: rgba(255, 255, 255, 0.28);
   --waveform-progress: linear-gradient(90deg, #ec4899, #f472b6);
 }
 
@@ -204,22 +246,22 @@
   --waveform-progress: var(--accent);
 }
 
-/* ---------------------------------------------------------------- */
-/* Mist — light, cool blue-gray surfaces, soft periwinkle accent     */
-/* ---------------------------------------------------------------- */
-[data-theme="mist"] {
-  --bg-app: #eef1f6;
-  --bg-panel: #f7f9fc;
-  --bg-panel-alt: #eaeef4;
-  --bg-hover: #dfe4ee;
-  --bg-active: #d3dae7;
-  --border-color: #d7dde8;
-  --text-primary: #1e2433;
-  --text-secondary: #5b6478;
-  --text-tertiary: #838da3;
-  --accent: #5b6ee8;
-  --accent-hover: #4356d6;
-  --accent-text: #f4f5ff;
-  --waveform: #c3c9db;
-  --waveform-progress: var(--accent);
+/* The Library toolbar is the one spot in the app where a lot of small
+   --bg-panel-family controls (search box, buttons, dropdowns) sit
+   directly inside another element that's already painting --bg-panel —
+   two ~92%+ translucent layers stacked like that compound to nearly
+   fully opaque, which is exactly why it read as solid while the plainer
+   track rows below it (no extra nested layer) still showed real blur.
+   Dropping just the toolbar strip's own background — its child controls
+   still carry their own — removes that one extra layer without touching
+   the shared component file's default look for every other theme. Every
+   acrylic-backed theme (see requiresAcrylic in themes.js) needs this. */
+[data-theme="tron"] .library-toolbar,
+[data-theme="emerald"] .library-toolbar,
+[data-theme="ember"] .library-toolbar,
+[data-theme="midnight"] .library-toolbar,
+[data-theme="blush"] .library-toolbar,
+[data-theme="sunset"] .library-toolbar,
+[data-theme="abyss"] .library-toolbar {
+  background: transparent;
 }

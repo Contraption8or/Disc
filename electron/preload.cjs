@@ -3,6 +3,16 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("disc", {
   toggleAlwaysOnTop: (shouldPin) =>
     ipcRenderer.invoke("disc:toggle-always-on-top", shouldPin),
+  togglePomodoroWindow: () => ipcRenderer.send("disc:toggle-pomodoro-window"),
+  isPomodoroWindowOpen: () => ipcRenderer.invoke("disc:is-pomodoro-window-open"),
+  togglePomodoroAlwaysOnTop: (shouldPin) =>
+    ipcRenderer.invoke("disc:toggle-pomodoro-always-on-top", shouldPin),
+  closePomodoroWindow: () => ipcRenderer.send("disc:pomodoro-window-close"),
+  onPomodoroWindowState: (callback) => {
+    const listener = (_event, open) => callback(open);
+    ipcRenderer.on("disc:pomodoro-window-state", listener);
+    return () => ipcRenderer.removeListener("disc:pomodoro-window-state", listener);
+  },
   chooseMusicFolder: () => ipcRenderer.invoke("disc:choose-music-folder"),
   chooseMp3Files: () => ipcRenderer.invoke("disc:choose-mp3-files"),
   scanFolder: (folderPath) => ipcRenderer.invoke("disc:scan-folder", folderPath),
@@ -49,6 +59,9 @@ contextBridge.exposeInMainWorld("disc", {
   setThreadPoolSize: (threadPoolSize) =>
     ipcRenderer.invoke("disc:set-thread-pool-size", threadPoolSize),
   getCpuCount: () => ipcRenderer.invoke("disc:get-cpu-count"),
+  getAcrylicEnabled: () => ipcRenderer.invoke("disc:get-acrylic-enabled"),
+  setAcrylicEnabled: (enabled) => ipcRenderer.invoke("disc:set-acrylic-enabled", enabled),
+  isAcrylicWindowActive: () => ipcRenderer.invoke("disc:is-acrylic-window-active"),
   getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
