@@ -11,7 +11,16 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
   const [themeContextMenu, setThemeContextMenu] = useState(null); // { x, y, theme } | null
   const [customThemes, setCustomThemes] = useState(loadCustomThemes);
   const [acrylicRestartNeeded, setAcrylicRestartNeeded] = useState(false);
+  const [acrylicSupported, setAcrylicSupported] = useState(true);
   const rootRef = useRef(null);
+
+  // Real blur only exists on Windows 11 (see isWindows11 in
+  // electron/main.js) — everywhere else these themes still render, just as
+  // translucent panels with no actual blur behind them. Checked once since
+  // it can't change without an OS upgrade.
+  useEffect(() => {
+    window.disc?.supportsAcrylic().then(setAcrylicSupported);
+  }, []);
 
   // A handful of themes (Tron, Sunset, Emerald, Abyss, Ember, Midnight,
   // Blush — see
@@ -22,16 +31,18 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
   // until the window is recreated. isAcrylicWindowActive reflects what
   // *this* running window actually has, so switching between two
   // acrylic-backed themes (or back to one after a restart already turned
-  // it on) doesn't nag for a restart that wouldn't change anything.
+  // it on) doesn't nag for a restart that wouldn't change anything. Gated
+  // on acrylicSupported too — on Windows 10 a restart can never turn this
+  // on, so nagging for one would just be a dead-end prompt.
   useEffect(() => {
     const needsAcrylic = Boolean(THEMES.find((t) => t.id === theme)?.requiresAcrylic);
     window.disc?.setAcrylicEnabled(needsAcrylic);
-    if (!needsAcrylic) {
+    if (!needsAcrylic || !acrylicSupported) {
       setAcrylicRestartNeeded(false);
       return;
     }
     window.disc?.isAcrylicWindowActive().then((active) => setAcrylicRestartNeeded(!active));
-  }, [theme]);
+  }, [theme, acrylicSupported]);
 
   useEffect(() => {
     function handleClickOutside(e) {

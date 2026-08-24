@@ -152,7 +152,22 @@ Menu.setApplicationMenu(null);
 // themes needs a restart to take visual effect — same "changes a startup
 // flag, needs a relaunch" pattern already used for the memory-limit and
 // CPU-thread settings above.
-const useAcrylic = process.platform === "win32" && Boolean(startupSettings.useAcrylic);
+//
+// Windows 10 and 11 both report process.platform === "win32" and even the
+// same os.release() major/minor ("10.0") — the only thing that actually
+// tells them apart is the build number, which jumps to 22000+ on 11. That
+// distinction matters here specifically: setting transparent + a
+// backgroundMaterial the compositor doesn't support is what was causing
+// real Windows 10 users theme-switching crashes and a blank/broken window,
+// not just a missing visual effect. Gating on the real build number keeps
+// Windows 10 on the plain opaque window path — acrylic-tagged themes still
+// render (translucent CSS panels, just with no real blur behind them,
+// exactly as themes.js's requiresAcrylic comment already describes as the
+// intended non-Windows-11 fallback), it just never touches transparent /
+// backgroundMaterial at all.
+const isWindows11 =
+  process.platform === "win32" && parseInt(os.release().split(".")[2] || "0", 10) >= 22000;
+const useAcrylic = isWindows11 && Boolean(startupSettings.useAcrylic);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -377,11 +392,12 @@ ipcMain.handle("disc:get-cpu-count", () => {
 
 // Acrylic-backed themes' background — same read/write-persisted-value,
 // relaunch-to-apply pattern as memory limit and CPU threads above.
-// win32-gated since backgroundMaterial has no effect (and these themes
-// would otherwise just look like a plain dark window) on any other
-// platform.
+// isWindows11-gated (not just win32) since backgroundMaterial is Windows
+// 11+ only — see the isWindows11 comment above createWindow for why this
+// distinction matters beyond "no effect": on Windows 10 it needs to be
+// forced off, not just left inert.
 ipcMain.handle("disc:get-acrylic-enabled", () => {
-  return process.platform === "win32" && Boolean(loadSettings().useAcrylic);
+  return isWindows11 && Boolean(loadSettings().useAcrylic);
 });
 
 ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
@@ -391,6 +407,13 @@ ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
   saveSettings(settings);
   return true;
 });
+
+// Lets the renderer tell "this theme's blur isn't active yet, restart to
+// turn it on" (Windows 11) apart from "this theme's blur can never turn on
+// here" (Windows 10 and everywhere else) — without it, ThemeSwitcher would
+// nag Windows 10 users to restart for an effect that restarting can't
+// produce.
+ipcMain.handle("disc:supports-acrylic", () => isWindows11);
 
 // Whether *this already-running* window was actually created with the
 // acrylic material — distinct from the saved preference above, which may

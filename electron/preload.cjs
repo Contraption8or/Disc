@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld("disc", {
   getAcrylicEnabled: () => ipcRenderer.invoke("disc:get-acrylic-enabled"),
   setAcrylicEnabled: (enabled) => ipcRenderer.invoke("disc:set-acrylic-enabled", enabled),
   isAcrylicWindowActive: () => ipcRenderer.invoke("disc:is-acrylic-window-active"),
+  supportsAcrylic: () => ipcRenderer.invoke("disc:supports-acrylic"),
   getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
