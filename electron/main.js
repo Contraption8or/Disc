@@ -168,6 +168,19 @@ Menu.setApplicationMenu(null);
 const isWindows11 =
   process.platform === "win32" && parseInt(os.release().split(".")[2] || "0", 10) >= 22000;
 const useAcrylic = isWindows11 && Boolean(startupSettings.useAcrylic);
+const isWindows = process.platform === "win32";
+// Electron only honors transparent:true on Windows when the window is
+// frameless — a real native frame silently breaks it (the acrylic
+// material paints, but the page never gets alpha-composited over it,
+// which is exactly the blank/blurred-with-no-UI window this was seen to
+// produce). Real native Snap and real Mica/Acrylic blur are therefore
+// mutually exclusive per window on Windows in Electron's current API:
+// acrylic themes keep the old frame:false path (no Snap, but the blur
+// renders correctly), non-acrylic themes get the real native frame (full
+// Snap support, see the comment in createWindow). Both useAcrylic and this
+// are startup-time snapshots already, so this doesn't add any new
+// restart-to-apply behavior.
+const hasNativeTitleBar = isWindows && !useAcrylic;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -185,7 +198,24 @@ function createWindow() {
     // with the entire Disc UI missing).
     backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
     title: "Disc",
-    frame: false,
+    // Non-acrylic themes on Windows get a real, fully native title bar
+    // (default frame:true) instead of Disc's own hand-drawn one — this was
+    // tried both as a fully custom frame:false window and as
+    // titleBarStyle/titleBarOverlay (real system caption buttons overlaid
+    // on custom content), and neither gets real OS window-move behavior:
+    // Electron's -webkit-app-region:drag repositions the window itself
+    // rather than handing off to Windows' actual native move gesture, so
+    // DWM's Snap engine (drag-to-edge preview, Snap Assist, the Snap
+    // Layouts hover flyout) never engages no matter how the title bar
+    // looks — a known, long-standing Electron limitation, not something
+    // fixable from the CSS/JS side. A real native frame is the only way to
+    // get genuine parity with every other Windows app here. TitleBar.jsx's
+    // brand mark, theme switcher, etc. move to being an ordinary
+    // (non-draggable, non-native) toolbar row under this real title bar,
+    // same as they already are on macOS/Linux where frame:false was kept
+    // (those platforms don't have this Snap limitation to design around).
+    // Acrylic themes can't use this path — see hasNativeTitleBar above.
+    ...(hasNativeTitleBar ? {} : { frame: false }),
     ...(useAcrylic ? { backgroundMaterial: "acrylic", transparent: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -414,6 +444,13 @@ ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
 // nag Windows 10 users to restart for an effect that restarting can't
 // produce.
 ipcMain.handle("disc:supports-acrylic", () => isWindows11);
+
+// Lets TitleBar.jsx know whether this window actually has a real native
+// frame (see hasNativeTitleBar above) so it can render itself as either
+// the OS-recognized draggable title bar (macOS/Linux, or Windows on a
+// non-acrylic theme) or a plain non-draggable toolbar row sitting under
+// Windows' own native one (Windows on an acrylic theme can't have both).
+ipcMain.handle("disc:has-native-title-bar", () => hasNativeTitleBar);
 
 // Whether *this already-running* window was actually created with the
 // acrylic material — distinct from the saved preference above, which may

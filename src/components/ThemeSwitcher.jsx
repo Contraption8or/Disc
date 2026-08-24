@@ -23,25 +23,31 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
   }, []);
 
   // A handful of themes (Tron, Sunset, Emerald, Abyss, Ember, Midnight,
-  // Blush — see
-  // requiresAcrylic in themes.js) use translucent panels that only
-  // actually show a blurred desktop through real Windows 11 Mica (see
-  // electron/main.js) — a startup-time window setting, so switching to
-  // one persists the preference right away but can't visually take effect
-  // until the window is recreated. isAcrylicWindowActive reflects what
-  // *this* running window actually has, so switching between two
-  // acrylic-backed themes (or back to one after a restart already turned
-  // it on) doesn't nag for a restart that wouldn't change anything. Gated
-  // on acrylicSupported too — on Windows 10 a restart can never turn this
-  // on, so nagging for one would just be a dead-end prompt.
+  // Blush — see requiresAcrylic in themes.js) use translucent panels over
+  // a real transparent/frameless Windows window (see useAcrylic and
+  // hasNativeTitleBar in electron/main.js) — a startup-time window
+  // setting, so switching either into OR out of one persists the
+  // preference right away but can't take effect until the window is
+  // recreated. Both directions genuinely need a restart here, not just
+  // "turning on": a window that's still transparent/frameless from an
+  // acrylic theme, now painting a fully opaque non-acrylic theme's CSS on
+  // top, is exactly what produced a corrupted-looking blank window rather
+  // than just "no blur yet". isAcrylicWindowActive reflects what *this*
+  // running window actually has, so switching between two themes that
+  // both need (or both don't need) acrylic doesn't nag for a restart that
+  // wouldn't change anything. Suppressed entirely when turning acrylic on
+  // isn't even supported (Windows 10) — no restart could satisfy that one
+  // anyway, so nagging for it would just be a dead end.
   useEffect(() => {
     const needsAcrylic = Boolean(THEMES.find((t) => t.id === theme)?.requiresAcrylic);
     window.disc?.setAcrylicEnabled(needsAcrylic);
-    if (!needsAcrylic || !acrylicSupported) {
+    if (needsAcrylic && !acrylicSupported) {
       setAcrylicRestartNeeded(false);
       return;
     }
-    window.disc?.isAcrylicWindowActive().then((active) => setAcrylicRestartNeeded(!active));
+    window.disc
+      ?.isAcrylicWindowActive()
+      .then((active) => setAcrylicRestartNeeded(needsAcrylic !== active));
   }, [theme, acrylicSupported]);
 
   useEffect(() => {
@@ -110,7 +116,11 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
 
       {acrylicRestartNeeded && (
         <div className="theme-switcher__restart-banner">
-          <span>Restart Disc for this theme's blur to activate</span>
+          <span>
+            {THEMES.find((t) => t.id === theme)?.requiresAcrylic
+              ? "Restart Disc for this theme's blur to activate"
+              : "Restart Disc to fully apply this theme"}
+          </span>
           <div className="theme-switcher__restart-actions">
             <button
               className="theme-switcher__restart-later"

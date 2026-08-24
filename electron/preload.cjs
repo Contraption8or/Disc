@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("disc", {
+  platform: process.platform,
   toggleAlwaysOnTop: (shouldPin) =>
     ipcRenderer.invoke("disc:toggle-always-on-top", shouldPin),
   togglePomodoroWindow: () => ipcRenderer.send("disc:toggle-pomodoro-window"),
@@ -63,6 +64,7 @@ contextBridge.exposeInMainWorld("disc", {
   setAcrylicEnabled: (enabled) => ipcRenderer.invoke("disc:set-acrylic-enabled", enabled),
   isAcrylicWindowActive: () => ipcRenderer.invoke("disc:is-acrylic-window-active"),
   supportsAcrylic: () => ipcRenderer.invoke("disc:supports-acrylic"),
+  hasNativeTitleBar: () => ipcRenderer.invoke("disc:has-native-title-bar"),
   getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
