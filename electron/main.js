@@ -4,8 +4,26 @@ import fs from "node:fs/promises";
 import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import AdmZip from "adm-zip";
+
+// Where Disc's own releases are published — used by the update check
+// below. Public repo, so the GitHub API needs no auth for this.
+const UPDATE_REPO = "Contraption8or/Disc";
+
+// Simple numeric X.Y.Z comparison — this project's tags are always plain
+// semver (v1.2.3), never pre-release suffixes, so a real semver library
+// would be more machinery than the actual format needs.
+function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
 
 // Content-Type by extension for disc-media:// responses (see below) — the
 // same set of formats the rest of the app already treats as playable
@@ -286,6 +304,10 @@ ipcMain.handle("disc:get-cpu-count", () => {
   return os.cpus().length;
 });
 
+ipcMain.handle("disc:get-app-version", () => {
+  return app.getVersion();
+});
+
 // Used when a folder gets dragged in from Explorer — confirms the dropped
 // path is genuinely a directory (not a file, and not something that just
 // vanished) before Disc creates a linked folder for it.
@@ -301,6 +323,57 @@ ipcMain.handle("disc:stat-path", async (_event, targetPath) => {
 ipcMain.on("disc:relaunch", () => {
   app.relaunch();
   app.exit(0);
+});
+
+// Checks GitHub Releases for a newer tagged version than the one
+// currently running. Read-only — never downloads anything itself, just
+// reports what's available so the renderer can decide whether to offer
+// the update.
+ipcMain.handle("disc:check-for-updates", async () => {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Disc-App" },
+    });
+    if (!res.ok) return { success: false, error: `GitHub returned ${res.status}` };
+    const release = await res.json();
+    const latestVersion = String(release.tag_name || "").replace(/^v/, "");
+    const currentVersion = app.getVersion();
+    const asset = (release.assets || []).find((a) => a.name.endsWith(".exe"));
+    return {
+      success: true,
+      hasUpdate: Boolean(latestVersion) && compareVersions(latestVersion, currentVersion) > 0,
+      currentVersion,
+      latestVersion: latestVersion || currentVersion,
+      releaseUrl: release.html_url,
+      downloadUrl: asset?.browser_download_url || null,
+      assetName: asset?.name || null,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Downloads the new installer to a temp file, launches it, and quits Disc
+// so the (one-click NSIS) installer can replace the files currently in
+// use. There's no progress reporting mid-download — a single "downloading"
+// state in the UI is the whole story, which is an honest trade for how
+// small this feature needs to be; a real progress bar would mean
+// streaming with periodic IPC events instead of one buffered fetch.
+ipcMain.handle("disc:download-and-install-update", async (_event, { downloadUrl, assetName }) => {
+  try {
+    if (!downloadUrl) return { success: false, error: "No installer available for this release" };
+    const res = await fetch(downloadUrl);
+    if (!res.ok) return { success: false, error: `Download failed (${res.status})` };
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const destPath = path.join(app.getPath("temp"), assetName || "Disc-Update-Setup.exe");
+    await fs.writeFile(destPath, buffer);
+    const child = spawn(destPath, [], { detached: true, stdio: "ignore" });
+    child.unref();
+    app.quit();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // --- Profiles ---------------------------------------------------------

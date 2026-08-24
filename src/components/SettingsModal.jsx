@@ -57,6 +57,11 @@ export default function SettingsModal({ onClose }) {
   const [selectedThreads, setSelectedThreads] = useState("");
   const [cpuCount, setCpuCount] = useState(null);
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
+  const [appVersion, setAppVersion] = useState(null);
+  // "idle" | "checking" | "up-to-date" | "available" | "downloading" | "error"
+  const [updateStatus, setUpdateStatus] = useState("idle");
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateError, setUpdateError] = useState(null);
   const rootRef = useRef(null);
 
   const candidateCount = getPreloadCandidates(allTracks).length;
@@ -71,7 +76,40 @@ export default function SettingsModal({ onClose }) {
       setSelectedThreads(n ? String(n) : "");
     });
     window.disc?.getCpuCount().then(setCpuCount);
+    window.disc?.getAppVersion().then(setAppVersion);
   }, []);
+
+  // Deliberately not auto-run on open — checking is a real network call to
+  // GitHub, so it only happens when someone actually asks for it.
+  async function handleCheckForUpdates() {
+    setUpdateStatus("checking");
+    setUpdateError(null);
+    const result = await window.disc?.checkForUpdates();
+    if (!result?.success) {
+      setUpdateStatus("error");
+      setUpdateError(result?.error || "Couldn't check for updates");
+      return;
+    }
+    setUpdateInfo(result);
+    setUpdateStatus(result.hasUpdate ? "available" : "up-to-date");
+  }
+
+  // On success the main process launches the downloaded installer and
+  // quits Disc itself almost immediately after — there's normally nothing
+  // left to update in the UI by the time this resolves either way.
+  async function handleInstallUpdate() {
+    if (!updateInfo?.downloadUrl) return;
+    setUpdateStatus("downloading");
+    setUpdateError(null);
+    const result = await window.disc?.downloadAndInstallUpdate(
+      updateInfo.downloadUrl,
+      updateInfo.assetName
+    );
+    if (!result?.success) {
+      setUpdateStatus("error");
+      setUpdateError(result?.error || "Couldn't download the update");
+    }
+  }
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -107,6 +145,54 @@ export default function SettingsModal({ onClose }) {
       <div className="settings-modal" ref={rootRef}>
         <div className="settings-modal__title">Settings</div>
 
+        <div className="settings-modal__section-title">Updates</div>
+        <p className="settings-modal__note settings-modal__note--top">
+          {appVersion ? `You're on version ${appVersion}.` : "Checking version…"}
+        </p>
+
+        {updateStatus === "up-to-date" && (
+          <p className="settings-modal__note settings-modal__note--top">
+            You're up to date.
+          </p>
+        )}
+        {updateStatus === "error" && (
+          <p className="settings-modal__note settings-modal__note--top">
+            {updateError}
+          </p>
+        )}
+        {updateStatus === "available" && updateInfo && (
+          <p className="settings-modal__note settings-modal__note--top">
+            Version {updateInfo.latestVersion} is available
+            {updateInfo.downloadUrl ? "." : " — no installer was found on that release, download it manually from GitHub."}
+          </p>
+        )}
+
+        <div className="settings-modal__actions">
+          {updateStatus === "available" && updateInfo?.downloadUrl ? (
+            <button
+              className="settings-modal__save"
+              style={{ width: "100%" }}
+              onClick={handleInstallUpdate}
+            >
+              Download &amp; Install v{updateInfo.latestVersion}
+            </button>
+          ) : (
+            <button
+              className="settings-modal__cancel"
+              style={{ width: "100%" }}
+              onClick={handleCheckForUpdates}
+              disabled={updateStatus === "checking" || updateStatus === "downloading"}
+            >
+              {updateStatus === "checking"
+                ? "Checking…"
+                : updateStatus === "downloading"
+                ? "Downloading…"
+                : "Check for Updates"}
+            </button>
+          )}
+        </div>
+
+        <div className="settings-modal__divider" />
         <div className="settings-modal__section-title">Performance</div>
 
         <label className="settings-modal__label">Memory limit</label>

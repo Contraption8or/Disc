@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld("disc", {
   setThreadPoolSize: (threadPoolSize) =>
     ipcRenderer.invoke("disc:set-thread-pool-size", threadPoolSize),
   getCpuCount: () => ipcRenderer.invoke("disc:get-cpu-count"),
+  getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
   chooseConvertibleFolder: () => ipcRenderer.invoke("disc:choose-convertible-folder"),
@@ -62,6 +63,9 @@ contextBridge.exposeInMainWorld("disc", {
   deleteSectionAudio: (trackFilePath, fileName) =>
     ipcRenderer.invoke("disc:delete-section-audio", { trackFilePath, fileName }),
   relaunchApp: () => ipcRenderer.send("disc:relaunch"),
+  checkForUpdates: () => ipcRenderer.invoke("disc:check-for-updates"),
+  downloadAndInstallUpdate: (downloadUrl, assetName) =>
+    ipcRenderer.invoke("disc:download-and-install-update", { downloadUrl, assetName }),
   listProfiles: () => ipcRenderer.invoke("disc:list-profiles"),
   saveProfile: (profileName, data, fileName) =>
     ipcRenderer.invoke("disc:save-profile", { profileName, data, fileName }),
