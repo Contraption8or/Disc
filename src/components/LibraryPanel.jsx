@@ -97,6 +97,8 @@ export default function LibraryPanel() {
     trackOverrides,
     healthFilter,
     onSetHealthFilter,
+    tagFilterId,
+    onSetTagFilter,
     collections,
     similarToTrackId,
     onFindSimilar,
@@ -171,9 +173,16 @@ export default function LibraryPanel() {
   const hasBpmFilter = bpmRange[0] > DEFAULT_BPM_RANGE[0] || bpmRange[1] < DEFAULT_BPM_RANGE[1];
   const hasKeyFilter = keyFilter !== "Any Key";
   const isHealthFiltering = healthFilter === "untagged" || healthFilter === "unanalyzed" || healthFilter === "missing";
+  const isTagFiltering = Boolean(tagFilterId);
   const isSimilarMode = Boolean(similarToTrackId);
   const isFiltering =
-    isGlobalSearch || hasBpmFilter || hasKeyFilter || showDuplicatesOnly || isHealthFiltering || isSimilarMode;
+    isGlobalSearch ||
+    hasBpmFilter ||
+    hasKeyFilter ||
+    showDuplicatesOnly ||
+    isHealthFiltering ||
+    isTagFiltering ||
+    isSimilarMode;
 
   // Manual drag-to-reorder only makes sense while looking at one real,
   // stable folder (or Favorites) — not search results, a Collection, a
@@ -204,6 +213,7 @@ export default function LibraryPanel() {
   // at that point.
   useEffect(() => {
     if (healthFilter) onSetHealthFilter(null);
+    if (tagFilterId) onSetTagFilter(null);
     if (similarToTrackId) onFindSimilar(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolderId]);
@@ -214,7 +224,9 @@ export default function LibraryPanel() {
   const isDuplicatesGlobal = showDuplicatesOnly && duplicatesGlobal;
   const searchFiltered = useMemo(() => {
     let result =
-      isGlobalSearch || isHealthFiltering || isDuplicatesGlobal ? allTracks : folderFiltered;
+      isGlobalSearch || isHealthFiltering || isTagFiltering || isDuplicatesGlobal
+        ? allTracks
+        : folderFiltered;
 
     if (isGlobalSearch) {
       const q = trimmedQuery.toLowerCase();
@@ -258,12 +270,17 @@ export default function LibraryPanel() {
       );
     }
 
+    if (tagFilterId) {
+      result = result.filter((t) => (trackTags[t.id] || []).includes(tagFilterId));
+    }
+
     return result;
     // analysisTick isn't read directly, but its purpose is to force this
     // memo to re-run when the (module-level) analysis cache changes.
   }, [
     isGlobalSearch,
     isHealthFiltering,
+    isTagFiltering,
     isDuplicatesGlobal,
     allTracks,
     folderFiltered,
@@ -277,6 +294,7 @@ export default function LibraryPanel() {
     analysisTick,
     trackOverrides,
     healthFilter,
+    tagFilterId,
     missingFolderIds,
     musicFolderPath,
     customFolders,
@@ -606,6 +624,20 @@ export default function LibraryPanel() {
           <button
             className="library-panel__clear-health"
             onClick={() => onSetHealthFilter(null)}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {tagFilterId && (
+        <div className="library-panel__missing-banner">
+          Showing: tracks tagged "
+          {tags.find((t) => t.id === tagFilterId)?.name || "…"}" across your
+          whole library.{" "}
+          <button
+            className="library-panel__clear-health"
+            onClick={() => onSetTagFilter(null)}
           >
             Clear
           </button>

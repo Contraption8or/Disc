@@ -4,9 +4,12 @@ import "./TagAssignMenu.css";
 
 export default function TagAssignMenu({ availableTags, onAssign, onCreateAndAssign, onClose }) {
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState("");
   const rootRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
+    inputRef.current?.focus();
     function handleClickOutside(e) {
       if (rootRef.current && !rootRef.current.contains(e.target)) onClose();
     }
@@ -30,12 +33,28 @@ export default function TagAssignMenu({ availableTags, onAssign, onCreateAndAssi
     );
   }
 
+  const filteredTags = query.trim()
+    ? availableTags.filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : availableTags;
+
   return (
     <div className="tag-assign-menu" ref={rootRef}>
+      {availableTags.length > 0 && (
+        <input
+          ref={inputRef}
+          className="tag-assign-menu__search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search tags…"
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+        />
+      )}
       {availableTags.length === 0 ? (
         <div className="tag-assign-menu__empty">No other tags yet.</div>
+      ) : filteredTags.length === 0 ? (
+        <div className="tag-assign-menu__empty">No tags match "{query.trim()}".</div>
       ) : (
-        availableTags.map((tag) => (
+        filteredTags.map((tag) => (
           <button
             key={tag.id}
             className="tag-assign-menu__option"

@@ -10,6 +10,7 @@ export default function CommandPalette({
   onOpenSettings,
   onOpenShortcuts,
   onOpenHealth,
+  onOpenTagManager,
   onToggleCompactMode,
 }) {
   const {
@@ -37,6 +38,7 @@ export default function CommandPalette({
       { id: "act-settings", type: "action", label: "Open Settings", run: onOpenSettings },
       { id: "act-shortcuts", type: "action", label: "Show Keyboard Shortcuts", run: onOpenShortcuts },
       { id: "act-health", type: "action", label: "Open Library Health", run: onOpenHealth },
+      { id: "act-tags", type: "action", label: "Manage Tags", run: onOpenTagManager },
       { id: "act-compact", type: "action", label: "Toggle Compact Mode", run: onToggleCompactMode },
       {
         id: "act-pin",
@@ -62,6 +64,7 @@ export default function CommandPalette({
       onOpenSettings,
       onOpenShortcuts,
       onOpenHealth,
+      onOpenTagManager,
       onToggleCompactMode,
       onTogglePin,
       pinned,

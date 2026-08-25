@@ -368,6 +368,12 @@ const ICONS = {
       <path d="M18.2 6a9.5 9.5 0 0 1 0 12" />
     </g>
   ),
+  tag: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+      <path d="M11.5 4.5h5.3a2 2 0 0 1 2 2v5.3a2 2 0 0 1-.6 1.4l-7.6 7.6a1.8 1.8 0 0 1-2.5 0l-5.4-5.4a1.8 1.8 0 0 1 0-2.5l7.6-7.6a2 2 0 0 1 1.2-.8z" />
+      <circle cx="15.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
+    </g>
+  ),
 };
 
 export default function Icon({ name, size = 16, className, style, title }) {

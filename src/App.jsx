@@ -11,6 +11,7 @@ import CompactView from "./components/CompactView.jsx";
 import ShortcutsModal from "./components/ShortcutsModal.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import LibraryHealthModal from "./components/LibraryHealthModal.jsx";
+import TagManagerModal from "./components/TagManagerModal.jsx";
 import ConvertModal from "./components/ConvertModal.jsx";
 import OggLinkPromptModal from "./components/OggLinkPromptModal.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
@@ -157,6 +158,10 @@ export default function App() {
   const [showSavedToast, setShowSavedToast] = useState(false);
   const savedToastTimeoutRef = useRef(null);
   const undoGroupTimeoutRef = useRef(null);
+  // A just-deleted tag, kept around briefly so it can be undone — see
+  // handleDeleteTag/handleUndoDeleteTag below.
+  const [pendingDeletedTag, setPendingDeletedTag] = useState(null); // { tag, trackIds } | null
+  const undoTagTimeoutRef = useRef(null);
   const [customFolderTracks, setCustomFolderTracks] = useState({});
   const watchedCustomIdsRef = useRef(new Set());
 
@@ -173,6 +178,7 @@ export default function App() {
   // whether the track's metadata happens to be loaded at read time.
   const [trackSections, setTrackSections] = useState(loadTrackSections);
   const [healthFilter, setHealthFilter] = useState(null); // null | 'untagged' | 'unanalyzed' | 'missing' | 'duplicates'
+  const [tagFilterId, setTagFilterId] = useState(null); // null | a tag id — "show only tracks with this tag"
 
   // --- Bulk library preload (waveform + BPM/Key for everything) --------
   // Lives at the App level (not inside the Settings modal) so it keeps
@@ -212,6 +218,7 @@ export default function App() {
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [healthModalOpen, setHealthModalOpen] = useState(false);
   const [convertModalOpen, setConvertModalOpen] = useState(false);
+  const [tagManagerModalOpen, setTagManagerModalOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   // --- Playback queue (for Play All / Shuffle) ------------------------
@@ -698,15 +705,91 @@ export default function App() {
     return id;
   }, []);
 
-  const handleDeleteTag = useCallback((tagId) => {
-    setTags((prev) => prev.filter((t) => t.id !== tagId));
+  // Soft delete — same pattern as handleDeleteFolderGroup above: removed
+  // immediately, but kept around for a few seconds so an accidental
+  // "Delete tag completely" can be undone before it's actually gone.
+  const handleDeleteTag = useCallback(
+    (tagId) => {
+      const tag = tags.find((t) => t.id === tagId);
+      if (!tag) return;
+      const trackIds = Object.keys(trackTags).filter((id) =>
+        (trackTags[id] || []).includes(tagId)
+      );
+
+      setTags((prev) => prev.filter((t) => t.id !== tagId));
+      setTrackTags((prev) => {
+        const next = {};
+        for (const [trackId, ids] of Object.entries(prev)) {
+          next[trackId] = ids.filter((id) => id !== tagId);
+        }
+        return next;
+      });
+      setPendingDeletedTag({ tag, trackIds });
+      clearTimeout(undoTagTimeoutRef.current);
+      undoTagTimeoutRef.current = setTimeout(() => setPendingDeletedTag(null), 8000);
+    },
+    [tags, trackTags]
+  );
+
+  const handleUndoDeleteTag = useCallback(() => {
+    if (!pendingDeletedTag) return;
+    clearTimeout(undoTagTimeoutRef.current);
+    const { tag, trackIds } = pendingDeletedTag;
+    setTags((prev) => [...prev, tag]);
+    setTrackTags((prev) => {
+      const next = { ...prev };
+      trackIds.forEach((trackId) => {
+        const current = next[trackId] || [];
+        if (!current.includes(tag.id)) next[trackId] = [...current, tag.id];
+      });
+      return next;
+    });
+    setPendingDeletedTag(null);
+  }, [pendingDeletedTag]);
+
+  const handleRenameTag = useCallback((tagId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, name: trimmed } : t)));
+  }, []);
+
+  const handleRecolorTag = useCallback((tagId, color) => {
+    setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, color } : t)));
+  }, []);
+
+  // Reassigns every track carrying `fromId` over to `intoId` (tracks that
+  // already had both just end up with one), then removes `fromId`
+  // entirely — the standard "these turned out to be the same tag" cleanup.
+  const handleMergeTags = useCallback((fromId, intoId) => {
+    if (fromId === intoId) return;
     setTrackTags((prev) => {
       const next = {};
       for (const [trackId, ids] of Object.entries(prev)) {
-        next[trackId] = ids.filter((id) => id !== tagId);
+        if (ids.includes(fromId)) {
+          next[trackId] = ids.includes(intoId)
+            ? ids.filter((id) => id !== fromId)
+            : ids.map((id) => (id === fromId ? intoId : id));
+        } else {
+          next[trackId] = ids;
+        }
       }
       return next;
     });
+    setTags((prev) => prev.filter((t) => t.id !== fromId));
+  }, []);
+
+  // Mutually exclusive with the health-dashboard filters (both drive the
+  // same "show only these tracks, spanning the whole library" library-view
+  // state) — setting one clears the other rather than trying to combine
+  // two different filtered views at once.
+  const handleSetTagFilter = useCallback((tagId) => {
+    setTagFilterId(tagId);
+    if (tagId) setHealthFilter(null);
+  }, []);
+
+  const handleSetHealthFilter = useCallback((filter) => {
+    setHealthFilter(filter);
+    if (filter) setTagFilterId(null);
   }, []);
 
   const handleToggleTrackTag = useCallback((trackId, tagId) => {
@@ -1632,7 +1715,9 @@ export default function App() {
       onAddTrackSection: handleAddTrackSection,
       onDeleteTrackSection: handleDeleteTrackSection,
       healthFilter,
-      onSetHealthFilter: setHealthFilter,
+      onSetHealthFilter: handleSetHealthFilter,
+      tagFilterId,
+      onSetTagFilter: handleSetTagFilter,
       preloadState,
       onStartPreload: handleStartPreload,
       onCancelPreload: handleCancelPreload,
@@ -1696,6 +1781,11 @@ export default function App() {
       trackTags,
       onCreateTag: handleCreateTag,
       onDeleteTag: handleDeleteTag,
+      onRenameTag: handleRenameTag,
+      onRecolorTag: handleRecolorTag,
+      onMergeTags: handleMergeTags,
+      pendingDeletedTag,
+      onUndoDeleteTag: handleUndoDeleteTag,
       onToggleTrackTag: handleToggleTrackTag,
       onAssignTagToTracks: handleAssignTagToTracks,
       queueTrackIds,
@@ -1731,6 +1821,9 @@ export default function App() {
       handleAddTrackSection,
       handleDeleteTrackSection,
       healthFilter,
+      handleSetHealthFilter,
+      tagFilterId,
+      handleSetTagFilter,
       preloadState,
       handleStartPreload,
       handleCancelPreload,
@@ -1790,6 +1883,11 @@ export default function App() {
       trackTags,
       handleCreateTag,
       handleDeleteTag,
+      handleRenameTag,
+      handleRecolorTag,
+      handleMergeTags,
+      pendingDeletedTag,
+      handleUndoDeleteTag,
       handleToggleTrackTag,
       handleAssignTagToTracks,
       queueTrackIds,
@@ -2126,6 +2224,7 @@ export default function App() {
           onOpenSettings={() => setSettingsModalOpen(true)}
           onOpenHealth={() => setHealthModalOpen(true)}
           onOpenConvert={() => setConvertModalOpen(true)}
+          onOpenTagManager={() => setTagManagerModalOpen(true)}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           preloadState={preloadState}
           knownPanels={knownPanels}
@@ -2156,6 +2255,9 @@ export default function App() {
           {convertModalOpen && (
             <ConvertModal onClose={() => setConvertModalOpen(false)} />
           )}
+          {tagManagerModalOpen && (
+            <TagManagerModal onClose={() => setTagManagerModalOpen(false)} />
+          )}
           {pendingOggLink && (
             <OggLinkPromptModal
               pendingOggLink={pendingOggLink}
@@ -2173,6 +2275,7 @@ export default function App() {
               onOpenSettings={() => setSettingsModalOpen(true)}
               onOpenShortcuts={() => setShortcutsModalOpen(true)}
               onOpenHealth={() => setHealthModalOpen(true)}
+              onOpenTagManager={() => setTagManagerModalOpen(true)}
               onToggleCompactMode={compactMode ? handleExitCompactMode : handleEnterCompactMode}
             />
           )}
@@ -2184,6 +2287,14 @@ export default function App() {
                 {pendingDeletedGroup.folders.length === 1 ? "" : "s"})
               </span>
               <button className="undo-toast__button" onClick={handleUndoDeleteFolderGroup}>
+                Undo
+              </button>
+            </div>
+          )}
+          {pendingDeletedTag && (
+            <div className="undo-toast">
+              <span>Deleted tag "{pendingDeletedTag.tag.name}"</span>
+              <button className="undo-toast__button" onClick={handleUndoDeleteTag}>
                 Undo
               </button>
             </div>

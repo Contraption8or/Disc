@@ -385,7 +385,7 @@ export default function DetailsPanel() {
             <span
               key={tag.id}
               className="details-panel__tag-chip"
-              style={{ background: tag.color, color: tag.color }}
+              style={{ background: tag.color }}
               title="Right-click for more options"
               onContextMenu={(e) => {
                 e.preventDefault();

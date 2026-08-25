@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { TAG_COLORS as PRESET_COLORS } from "../tags/tagColors.js";
 import "./TagCreateMenu.css";
-
-const PRESET_COLORS = [
-  "#ff6b6b", "#ffa94d", "#ffd43b", "#94d82d", "#38d9a9",
-  "#22b8cf", "#4dabf7", "#748ffc", "#e599f7", "#f783ac",
-];
 
 export default function TagCreateMenu({ onCreate, onClose }) {
   const [name, setName] = useState("");

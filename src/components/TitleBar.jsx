@@ -28,6 +28,7 @@ export default function TitleBar({
   onOpenSettings,
   onOpenHealth,
   onOpenConvert,
+  onOpenTagManager,
   onOpenCommandPalette,
   preloadState,
   knownPanels,
@@ -80,6 +81,13 @@ export default function TitleBar({
           onClick={onOpenHealth}
         >
           <Icon name="stethoscope" size={15} />
+        </button>
+        <button
+          className="titlebar__icon-button"
+          title="Manage Tags"
+          onClick={onOpenTagManager}
+        >
+          <Icon name="tag" size={15} />
         </button>
         <button
           className="titlebar__icon-button"

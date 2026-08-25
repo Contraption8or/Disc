@@ -16,6 +16,21 @@
   flex-direction: column;
 }
 
+.tag-assign-menu__search {
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  margin: 2px 2px var(--space-1) 2px;
+}
+
+.tag-assign-menu__search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .tag-assign-menu__empty {
   color: var(--text-tertiary);
   font-size: 12px;
