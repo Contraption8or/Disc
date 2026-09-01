@@ -2,6 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import "./FolderContextMenu.css";
 
+// Rough worst-case size (all rows shown, export status text) — same
+// clamp-to-viewport approach as TrackContextMenu, needed because this is
+// `position: fixed` off raw click coordinates: without it, right-clicking
+// near the bottom/right of the window (or the taskbar, if the window
+// itself sits near the bottom of the screen) renders the menu partly
+// off-screen instead of flipping to fit.
+const MENU_WIDTH = 220;
+const MENU_HEIGHT = 175;
+
 export default function FolderContextMenu({ x, y, folder, onUnlink, onRename, onDelete, onClose }) {
   const { customFolderTracks } = useDisc();
   const [exportStatus, setExportStatus] = useState(null); // null | "exporting" | "success" | "error"
@@ -48,8 +57,11 @@ export default function FolderContextMenu({ x, y, folder, onUnlink, onRename, on
     }
   }
 
+  const left = Math.min(x, window.innerWidth - MENU_WIDTH - 8);
+  const top = Math.min(y, window.innerHeight - MENU_HEIGHT - 8);
+
   return (
-    <div className="folder-context-menu" style={{ left: x, top: y }} ref={rootRef}>
+    <div className="folder-context-menu" style={{ left, top }} ref={rootRef}>
       <button
         className="folder-context-menu__option"
         onClick={() => {

@@ -108,6 +108,21 @@
   border-top-color: var(--accent);
 }
 
+/* Favorites (and any other system folder) renders here, as a real
+   sibling above .sidebar__list-area rather than a sticky row inside
+   it — nothing ever scrolls underneath it, so unlike three earlier
+   attempts at a "sticky row with a matching background," it needs no
+   background of its own at all. It stays fully transparent, exactly
+   like every other row, and shows through to the same single panel
+   layer they do — acrylic blur included — with nothing to compound
+   against. See the comment above where this renders in
+   FolderGroupPanel.jsx for the full story. */
+.sidebar__row-pinned-wrap {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
 .sidebar__row--dragging {
   opacity: 0.4;
 }

@@ -678,6 +678,25 @@ export default function FolderGroupPanel({ params }) {
           </div>
         )}
 
+        {/* Rendered as a real, non-scrolling sibling above the scroll
+            area — not a "sticky" row inside it — so it never has content
+            scrolling underneath/behind it that its own background would
+            need to occlude. That's what lets it stay fully transparent
+            (see .sidebar__row-pinned-wrap in Sidebar.css) and genuinely
+            match every other row's appearance exactly, acrylic blur
+            included, instead of needing its own background color that
+            visibly compounds with the panel's already-translucent one
+            underneath (tried three different approaches to that before
+            landing here — none of them could avoid the double-layering). */}
+        {displaySystemFolders.length > 0 &&
+          (!isSearching || displaySystemFolders.some(itemMatchesQuery)) && (
+            <div className="sidebar__row-pinned-wrap">
+              {(isSearching ? displaySystemFolders.filter(itemMatchesQuery) : displaySystemFolders).map(
+                (folder) => renderFolderRow(folder)
+              )}
+            </div>
+          )}
+
         <div
           className="sidebar__list-area"
           onContextMenu={handleContextMenu}
@@ -687,9 +706,6 @@ export default function FolderGroupPanel({ params }) {
           onDrop={handleListAreaDrop}
         >
           <div className="sidebar__list">
-            {(isSearching ? displaySystemFolders.filter(itemMatchesQuery) : displaySystemFolders).map(
-              (folder) => renderFolderRow(folder)
-            )}
             {renderChildren(topLevelItems, 0)}
             {isSearching &&
               !displaySystemFolders.some(itemMatchesQuery) &&

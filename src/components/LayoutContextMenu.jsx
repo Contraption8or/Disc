@@ -2,6 +2,10 @@ import { useEffect, useRef } from "react";
 import Icon from "./Icon.jsx";
 import "./LayoutContextMenu.css";
 
+// Clamp to viewport — see the same constant/comment in FolderContextMenu.
+const MENU_WIDTH = 230;
+const MENU_HEIGHT = 130;
+
 export default function LayoutContextMenu({
   x,
   y,
@@ -28,8 +32,11 @@ export default function LayoutContextMenu({
     };
   }, [onClose]);
 
+  const left = Math.min(x, window.innerWidth - MENU_WIDTH - 8);
+  const top = Math.min(y, window.innerHeight - MENU_HEIGHT - 8);
+
   return (
-    <div className="layout-context-menu" style={{ left: x, top: y }} ref={rootRef}>
+    <div className="layout-context-menu" style={{ left, top }} ref={rootRef}>
       <button
         className="layout-context-menu__option"
         onClick={() => {

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import "./TagContextMenu.css";
 
+// Clamp to viewport — see the same constant/comment in FolderContextMenu.
+const MENU_WIDTH = 210;
+const MENU_HEIGHT = 120;
+
 export default function TagContextMenu({ x, y, tagName, onRemoveFromTrack, onDeleteForever, onClose }) {
   const [armed, setArmed] = useState(false);
   const rootRef = useRef(null);
@@ -20,8 +24,11 @@ export default function TagContextMenu({ x, y, tagName, onRemoveFromTrack, onDel
     };
   }, [onClose]);
 
+  const left = Math.min(x, window.innerWidth - MENU_WIDTH - 8);
+  const top = Math.min(y, window.innerHeight - MENU_HEIGHT - 8);
+
   return (
-    <div className="tag-context-menu" style={{ left: x, top: y }} ref={rootRef}>
+    <div className="tag-context-menu" style={{ left, top }} ref={rootRef}>
       <div className="tag-context-menu__title">"{tagName}"</div>
 
       <button

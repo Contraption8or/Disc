@@ -1,7 +1,7 @@
 {
   "name": "disc",
   "productName": "Disc",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "A local mp3 library manager for video editors, built to drag straight into Premiere Pro.",
   "private": true,
   "main": "electron/main.js",
