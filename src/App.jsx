@@ -333,6 +333,12 @@ export default function App() {
         rootStyle.setProperty(`${v}-base`, computed.getPropertyValue(v).trim());
       });
     }
+    // Lets the window-snap preview (see electron/main.js) match whatever
+    // theme is active — only the renderer can read the real computed
+    // --accent, so it's reported over IPC rather than main.js guessing.
+    window.disc?.setSnapAccentColor(
+      getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
+    );
   }, []);
 
   useEffect(() => {

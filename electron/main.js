@@ -6,7 +6,25 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import os from "node:os";
+import { createRequire } from "node:module";
 import AdmZip from "adm-zip";
+
+// mouse-state is a Windows-only native addon (CommonJS, so it needs
+// createRequire from this ESM file) — see native/mouse-state/mouse_state.cc
+// and the comment above setupWindowSnap below for why it's needed at all.
+// Loaded defensively: it may not be built (missing Visual Studio Build
+// Tools, or it simply failed to build), and Disc must keep working
+// perfectly well without it — the window-snap system just falls back to
+// its slower timer-based heuristic for detecting drag-end.
+const require = createRequire(import.meta.url);
+let mouseState = null;
+if (process.platform === "win32") {
+  try {
+    mouseState = require("mouse-state");
+  } catch {
+    mouseState = null;
+  }
+}
 
 // Where Disc's own releases are published — used by the update check
 // below. Public repo, so the GitHub API needs no auth for this.
@@ -169,18 +187,6 @@ const isWindows11 =
   process.platform === "win32" && parseInt(os.release().split(".")[2] || "0", 10) >= 22000;
 const useAcrylic = isWindows11 && Boolean(startupSettings.useAcrylic);
 const isWindows = process.platform === "win32";
-// Electron only honors transparent:true on Windows when the window is
-// frameless — a real native frame silently breaks it (the acrylic
-// material paints, but the page never gets alpha-composited over it,
-// which is exactly the blank/blurred-with-no-UI window this was seen to
-// produce). Real native Snap and real Mica/Acrylic blur are therefore
-// mutually exclusive per window on Windows in Electron's current API:
-// acrylic themes keep the old frame:false path (no Snap, but the blur
-// renders correctly), non-acrylic themes get the real native frame (full
-// Snap support, see the comment in createWindow). Both useAcrylic and this
-// are startup-time snapshots already, so this doesn't add any new
-// restart-to-apply behavior.
-const hasNativeTitleBar = isWindows && !useAcrylic;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -198,24 +204,7 @@ function createWindow() {
     // with the entire Disc UI missing).
     backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
     title: "Disc",
-    // Non-acrylic themes on Windows get a real, fully native title bar
-    // (default frame:true) instead of Disc's own hand-drawn one — this was
-    // tried both as a fully custom frame:false window and as
-    // titleBarStyle/titleBarOverlay (real system caption buttons overlaid
-    // on custom content), and neither gets real OS window-move behavior:
-    // Electron's -webkit-app-region:drag repositions the window itself
-    // rather than handing off to Windows' actual native move gesture, so
-    // DWM's Snap engine (drag-to-edge preview, Snap Assist, the Snap
-    // Layouts hover flyout) never engages no matter how the title bar
-    // looks — a known, long-standing Electron limitation, not something
-    // fixable from the CSS/JS side. A real native frame is the only way to
-    // get genuine parity with every other Windows app here. TitleBar.jsx's
-    // brand mark, theme switcher, etc. move to being an ordinary
-    // (non-draggable, non-native) toolbar row under this real title bar,
-    // same as they already are on macOS/Linux where frame:false was kept
-    // (those platforms don't have this Snap limitation to design around).
-    // Acrylic themes can't use this path — see hasNativeTitleBar above.
-    ...(hasNativeTitleBar ? {} : { frame: false }),
+    frame: false,
     ...(useAcrylic ? { backgroundMaterial: "acrylic", transparent: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -247,8 +236,410 @@ function createWindow() {
     // timer widget with no way back to the real app — no tray icon, no
     // menu, nothing to reopen it from.
     pomodoroWindow?.close();
+    teardownWindowSnap();
+  });
+
+  setupWindowSnap(mainWindow);
+}
+
+// --- Window snapping ---------------------------------------------------
+// A from-scratch, OS-independent replacement for Windows' own Snap —
+// dragging the title bar to a screen edge shows a preview and, on
+// release, resizes the window to that zone. Electron's own
+// -webkit-app-region:drag moves the window itself rather than handing off
+// to a real native move gesture, so DWM's actual Snap engine never
+// engages no matter how the title bar is set up (see the git history for
+// the earlier, abandoned attempt to get real native Snap working, both
+// via a native addon and by giving non-acrylic themes an actual native
+// frame) — this sidesteps that entirely by not depending on it at all.
+// Works identically for every theme, including acrylic/transparent ones,
+// which native Snap fundamentally couldn't support.
+const SNAP_EDGE_PX = 28; // distance from a work-area edge that counts as "in the zone"
+const SNAP_ARM_MOVES = 3; // consecutive 'move' events required before treating this as a real drag, not an incidental programmatic setBounds
+// Chromium doesn't deliver a normal DOM mouseup for the button that
+// started a -webkit-app-region:drag window move — confirmed by testing,
+// not just suspected: instrumented both paths and every single release
+// during a real drag only ever hit the fallback timer, never a mouseup
+// event, no matter how the drag ended. mouseState (see the require above)
+// sidesteps that by polling Windows directly for whether the button is
+// still physically held, checked every SNAP_POLL_MS while a drag might be
+// active — this is what actually ends a drag now. SNAP_DRAG_END_MS below
+// only matters as a fallback on non-Windows/pre-mouseState-build systems.
+const SNAP_POLL_MS = 40;
+const SNAP_DRAG_END_MS = 3000; // fallback only, and only when mouseState isn't available at all — see the comment above. Deliberately long so it can never mistake an ordinary mid-drag pause for the drag having ended.
+
+let snapPreviewWindow = null;
+let snapMoveTimer = null;
+let snapPollTimer = null;
+let snapMoveStreak = 0;
+let snapPendingZone = null; // { type, display } | null
+let snapTargetWindow = null;
+// Which zone the preview is *currently showing* (not just whatever the
+// cursor happens to be over this instant) — used two ways below: as a
+// hysteresis band (once a zone is active, leaving it needs a bigger move
+// than entering it did, so ordinary hand jitter right at the boundary
+// during a real drag doesn't flicker the preview in and out), and to skip
+// re-issuing setBounds/show on every single 'move' event while the
+// cursor sits still inside the same zone (each 'move' event redoes this
+// work otherwise, which is its own separate source of visible flicker).
+let snapActiveZoneType = null;
+// Accent color for the preview — piped in from the renderer (see
+// disc:set-snap-accent-color below) since only it can read the active
+// theme's actual CSS custom property; this is just the last value it
+// reported, with a reasonable default before that first report arrives.
+let snapAccentRgb = "79, 157, 255";
+// Windows-style "un-snap on drag away, back to whatever size it was
+// before" — snapWasFree holds the exact bounds the window had right
+// before its *first* snap in the current streak (snapping left, then top,
+// then right in one continuous session must all restore to that same
+// original size, not to "left" when un-snapping from "top"). Guarded by
+// isSnapped so it's only captured once per streak, and cleared once the
+// window is actually back to a free size.
+let snapIsSnapped = false;
+let snapFreeBounds = null;
+// A short ignore-window (timestamp, not a one-shot flag) set right before
+// this module calls setBounds on the real window itself, so the 'move'
+// event(s) that call triggers don't get misread as the user still
+// actively dragging. This has to be a window, not a single-consume
+// boolean: one setBounds call can fire more than one 'move' event, and a
+// boolean only swallows the first — the rest were slipping through,
+// re-arming the whole system off our *own* resize and causing a visibly
+// laggy, sometimes-snaps-back-to-the-big-size mess.
+let snapIgnoreMoveUntil = 0;
+const SNAP_IGNORE_MOVE_MS = 120;
+
+function markProgrammaticMove() {
+  snapIgnoreMoveUntil = Date.now() + SNAP_IGNORE_MOVE_MS;
+}
+
+// The actual snap/un-snap animation. Earlier versions animated something
+// *live* — first the real window's own bounds directly (~60 setBounds
+// calls a second, visibly staggery, since Windows redoes a full layout/
+// repaint of Disc's entire real UI on every one), then a CSS clip-path on
+// the real page content (still not smooth: Disc's own live content —
+// waveform canvases, the Pomodoro timer ticking, hover states — can force
+// its own repaints regardless of will-change, competing with the
+// animation for main-thread time). This version instead animates a
+// static PNG snapshot of the window taken a moment ago, so nothing live
+// is involved in the animation at all — the real window resizes once,
+// instantly, invisibly, while a plain <img> overlay (transform-only, the
+// one CSS animation Chromium can *always* run purely on the compositor,
+// no repaint possible regardless of page complexity) plays the actual
+// visible motion on top of it, then gets removed to reveal the real,
+// already-correctly-sized window underneath.
+const SNAP_ANIM_MS = 220;
+// Same easing curve as every modal's open animation elsewhere in Disc
+// (see disc-modal-scale-in in src/appearance/motion.css) — keeps this
+// feeling like part of the same app rather than a bolted-on effect.
+const SNAP_ANIM_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const SNAP_GHOST_ID = "disc-snap-ghost";
+
+async function animateSnapCrop(win, from, to) {
+  if (win.isDestroyed()) return;
+
+  let dataUrl = null;
+  try {
+    const image = await win.capturePage();
+    if (!image.isEmpty()) {
+      // Downscaled and JPEG-compressed rather than a full-resolution
+      // PNG — this is only ever on screen for ~220ms during a fast
+      // transform, so full fidelity buys nothing but latency. Capturing,
+      // PNG-encoding, and IPC-transferring a full-res snapshot (a
+      // multi-MB base64 string for anything near fullscreen) was the
+      // real source of the ~500ms pause before the window even started
+      // resizing — none of that work was on the critical path for
+      // correctness, just for how much detail the ghost image carries.
+      const scale = Math.min(1, 640 / Math.max(1, from.width));
+      const small =
+        scale < 1
+          ? image.resize({
+              width: Math.round(from.width * scale),
+              height: Math.round(from.height * scale),
+            })
+          : image;
+      dataUrl = "data:image/jpeg;base64," + small.toJPEG(72).toString("base64");
+    }
+  } catch {
+    dataUrl = null;
+  }
+  if (win.isDestroyed()) return;
+
+  // No snapshot (capture failed, or there was nothing painted yet) —
+  // still resize correctly, just without anything to animate over it.
+  if (!dataUrl) {
+    markProgrammaticMove();
+    win.setBounds(to);
+    return;
+  }
+
+  // FLIP technique: the overlay's own box is sized to `to` from the
+  // start (matching the real window's soon-to-be-final size) and never
+  // resized again — all the motion is a single `transform`, scaling and
+  // translating that box so it first *looks* like it's sitting where/how
+  // large `from` was, then animating to identity (0,0 / 1,1), which
+  // visually reveals the full new size. transform is the one property
+  // that never needs layout or a repaint to animate, regardless of what
+  // will-change promises elsewhere — it's compositor math on an already-
+  // rasterized layer, every frame, guaranteed.
+  const dx = from.x - to.x;
+  const dy = from.y - to.y;
+  const sx = from.width / to.width;
+  const sy = from.height / to.height;
+
+  const setupScript = `
+    (function () {
+      var img = document.createElement('img');
+      img.id = ${JSON.stringify(SNAP_GHOST_ID)};
+      img.src = ${JSON.stringify(dataUrl)};
+      img.style.cssText =
+        'position:fixed;left:0;top:0;width:${to.width}px;height:${to.height}px;' +
+        'margin:0;z-index:2147483647;pointer-events:none;object-fit:fill;' +
+        'transform-origin:0 0;' +
+        'transform:translate(${dx}px,${dy}px) scale(${sx},${sy});' +
+        'will-change:transform;transition:none;';
+      document.documentElement.appendChild(img);
+      void img.offsetWidth; // force layout so this starting transform is actually committed, not just queued
+    })();
+  `;
+  try {
+    await win.webContents.executeJavaScript(setupScript);
+  } catch {
+    markProgrammaticMove();
+    win.setBounds(to);
+    return;
+  }
+  if (win.isDestroyed()) return;
+
+  markProgrammaticMove();
+  win.setBounds(to);
+
+  const revealScript = `
+    (function () {
+      var img = document.getElementById(${JSON.stringify(SNAP_GHOST_ID)});
+      if (!img) return;
+      img.style.transition = 'transform ${SNAP_ANIM_MS}ms ${SNAP_ANIM_EASING}';
+      requestAnimationFrame(function () {
+        img.style.transform = 'translate(0px, 0px) scale(1, 1)';
+      });
+      setTimeout(function () {
+        if (img.parentNode) img.parentNode.removeChild(img);
+      }, ${SNAP_ANIM_MS + 40});
+    })();
+  `;
+  win.webContents.executeJavaScript(revealScript).catch(() => {});
+}
+
+function getSnapZone(point) {
+  const display = screen.getDisplayNearestPoint(point);
+  const { x, y, width, height } = display.workArea;
+  const relX = point.x - x;
+  const relY = point.y - y;
+  const threshold = snapActiveZoneType ? SNAP_EDGE_PX * 2 : SNAP_EDGE_PX;
+  const nearTop = relY <= threshold;
+  const nearLeft = relX <= threshold;
+  const nearRight = relX >= width - threshold;
+
+  if (nearTop && nearLeft) return { type: "top-left", display };
+  if (nearTop && nearRight) return { type: "top-right", display };
+  if (nearTop) return { type: "top", display };
+  if (nearLeft) return { type: "left", display };
+  if (nearRight) return { type: "right", display };
+  return null;
+}
+
+function hexToRgbString(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex).trim());
+  if (!m) return null;
+  return `${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}`;
+}
+
+function snapPreviewHtml() {
+  return (
+    "data:text/html,<style>html,body{margin:0;width:100%;height:100%;" +
+    `background:rgba(${snapAccentRgb},0.28);border:2px solid rgba(${snapAccentRgb},0.9);` +
+    "box-sizing:border-box;}</style>"
+  );
+}
+
+function snapZoneBounds(zone) {
+  const { x, y, width, height } = zone.display.workArea;
+  const halfW = Math.round(width / 2);
+  const halfH = Math.round(height / 2);
+  switch (zone.type) {
+    case "top":
+      return { x, y, width, height };
+    case "left":
+      return { x, y, width: halfW, height };
+    case "right":
+      return { x: x + halfW, y, width: width - halfW, height };
+    case "top-left":
+      return { x, y, width: halfW, height: halfH };
+    case "top-right":
+      return { x: x + halfW, y, width: width - halfW, height: halfH };
+    default:
+      return null;
+  }
+}
+
+function ensureSnapPreviewWindow() {
+  if (snapPreviewWindow && !snapPreviewWindow.isDestroyed()) return snapPreviewWindow;
+  snapPreviewWindow = new BrowserWindow({
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+  });
+  // Click-through — this window only ever displays a preview rectangle,
+  // it must never intercept the drag that's still happening in the real
+  // window underneath it.
+  snapPreviewWindow.setIgnoreMouseEvents(true);
+  snapPreviewWindow.loadURL(snapPreviewHtml());
+  return snapPreviewWindow;
+}
+
+function hideSnapPreview() {
+  if (snapPreviewWindow && !snapPreviewWindow.isDestroyed() && snapPreviewWindow.isVisible()) {
+    snapPreviewWindow.hide();
+  }
+}
+
+// Only ever called once per drag — the window's actual size/position is
+// never touched mid-drag (see setupWindowSnap below for why: an earlier
+// version resized on every zone change during the drag itself, calling
+// setBounds while Windows' own native move loop was still actively
+// driving the window, and the two fought each other — visually the
+// window would briefly shrink, then get yanked back to its snapped size
+// and stay stuck to the cursor until release). Whatever the window's
+// bounds happen to be when this runs is just left as the native drag
+// left them, unless a zone applies.
+function finishSnapDrag() {
+  clearTimeout(snapMoveTimer);
+  clearInterval(snapPollTimer);
+  snapPollTimer = null;
+  if (snapTargetWindow && !snapTargetWindow.isDestroyed()) {
+    if (snapPendingZone) {
+      if (snapTargetWindow.isMaximized()) snapTargetWindow.unmaximize();
+      // Only the *first* snap in a streak overwrites the size to restore
+      // to later — snapping left, then top, then right without ever
+      // letting go of a free size in between must all still restore back
+      // to the one true original, not to whichever snap preceded this.
+      if (!snapIsSnapped) snapFreeBounds = snapTargetWindow.getBounds();
+      animateSnapCrop(
+        snapTargetWindow,
+        snapTargetWindow.getBounds(),
+        snapZoneBounds(snapPendingZone)
+      );
+      snapIsSnapped = true;
+    } else if (snapIsSnapped && snapFreeBounds) {
+      // Released away from any zone while the window was still snapped —
+      // un-snap: restore the original *size*, but keep whatever position
+      // the native drag actually left the window at (its top-left tracks
+      // the cursor throughout a normal drag, so this lands close to a
+      // natural drop point without needing to compute one).
+      const current = snapTargetWindow.getBounds();
+      animateSnapCrop(snapTargetWindow, current, {
+        x: current.x,
+        y: current.y,
+        width: snapFreeBounds.width,
+        height: snapFreeBounds.height,
+      });
+      snapIsSnapped = false;
+      snapFreeBounds = null;
+    }
+  }
+  snapPendingZone = null;
+  snapMoveStreak = 0;
+  snapActiveZoneType = null;
+  hideSnapPreview();
+}
+
+function setupWindowSnap(win) {
+  win.on("move", () => {
+    if (Date.now() < snapIgnoreMoveUntil) return;
+    snapMoveStreak += 1;
+    clearTimeout(snapMoveTimer);
+    snapMoveTimer = setTimeout(finishSnapDrag, SNAP_DRAG_END_MS);
+
+    if (snapMoveStreak < SNAP_ARM_MOVES) return;
+    snapTargetWindow = win;
+    // Polling for the real drag-end (see the SNAP_POLL_MS comment above)
+    // starts the moment a drag is confirmed armed, not on every 'move'
+    // event — setInterval is idempotent-guarded here so repeated arming
+    // checks while already polling don't stack up multiple intervals.
+    if (mouseState && !snapPollTimer) {
+      snapPollTimer = setInterval(() => {
+        if (!mouseState.isLeftButtonDown()) finishSnapDrag();
+      }, SNAP_POLL_MS);
+    }
+    const zone = getSnapZone(screen.getCursorScreenPoint());
+    snapPendingZone = zone;
+    const zoneType = zone?.type ?? null;
+    // Skip re-doing any of this while the cursor just sits inside the
+    // same zone it was already in last 'move' event — that's the common
+    // case (this fires on every pixel of movement during a drag) and
+    // redoing setBounds/show on an already-correct, already-visible
+    // window is exactly what was producing the flicker.
+    if (zoneType === snapActiveZoneType) return;
+    snapActiveZoneType = zoneType;
+    if (zone) {
+      const preview = ensureSnapPreviewWindow();
+      preview.setBounds(snapZoneBounds(zone));
+      if (!preview.isVisible()) preview.showInactive();
+    } else {
+      hideSnapPreview();
+    }
   });
 }
+
+function teardownWindowSnap() {
+  clearTimeout(snapMoveTimer);
+  clearInterval(snapPollTimer);
+  snapPollTimer = null;
+  snapPendingZone = null;
+  snapMoveStreak = 0;
+  snapActiveZoneType = null;
+  snapTargetWindow = null;
+  snapIsSnapped = false;
+  snapFreeBounds = null;
+  snapIgnoreMoveUntil = 0;
+  if (snapPreviewWindow && !snapPreviewWindow.isDestroyed()) snapPreviewWindow.destroy();
+  snapPreviewWindow = null;
+}
+
+// Secondary drag-end signal, kept as a backstop for platforms/builds where
+// mouseState isn't available (see the comment above SNAP_POLL_MS) — a
+// renderer-reported mouseup, tested and confirmed to *not* actually fire
+// during a real title-bar drag on Windows (Chromium swallows it), but
+// still worth keeping for the ordinary case of clicking without dragging
+// far enough to arm, and as a fallback on other platforms. Only acts if a
+// drag was actually armed, so this is a harmless no-op the rest of the
+// time.
+ipcMain.on("disc:mouse-up", () => {
+  if (snapMoveStreak >= SNAP_ARM_MOVES) finishSnapDrag();
+});
+
+// Reported by the renderer whenever the active theme's accent color is
+// known/changes (see setSnapAccentColor in preload.cjs) — only it can
+// read the real computed CSS value. Reloading the already-created
+// preview window's content on the fly means a mid-session theme switch
+// doesn't need a restart to pick up the new color, same as most other
+// live-appliable theme changes in Disc.
+ipcMain.on("disc:set-snap-accent-color", (_event, hex) => {
+  const rgb = hexToRgbString(hex);
+  if (!rgb) return;
+  snapAccentRgb = rgb;
+  if (snapPreviewWindow && !snapPreviewWindow.isDestroyed()) {
+    snapPreviewWindow.loadURL(snapPreviewHtml());
+  }
+});
 
 // A small, standalone, always-on-top-capable window that shows just the
 // Pomodoro timer — for keeping it visible over whatever else is on screen
@@ -444,13 +835,6 @@ ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
 // nag Windows 10 users to restart for an effect that restarting can't
 // produce.
 ipcMain.handle("disc:supports-acrylic", () => isWindows11);
-
-// Lets TitleBar.jsx know whether this window actually has a real native
-// frame (see hasNativeTitleBar above) so it can render itself as either
-// the OS-recognized draggable title bar (macOS/Linux, or Windows on a
-// non-acrylic theme) or a plain non-draggable toolbar row sitting under
-// Windows' own native one (Windows on an acrylic theme can't have both).
-ipcMain.handle("disc:has-native-title-bar", () => hasNativeTitleBar);
 
 // Whether *this already-running* window was actually created with the
 // acrylic material — distinct from the saved preference above, which may

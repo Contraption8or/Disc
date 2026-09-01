@@ -6,6 +6,11 @@ dist/
 dist-electron/
 release/
 
+# Native addon build output (native/<name>/build/) — machine/ABI-specific
+# compiled binaries, rebuilt fresh by `npm install` on each machine
+native/*/build/
+native/*/node_modules/
+
 # Environment / local config
 .env
 .env.local

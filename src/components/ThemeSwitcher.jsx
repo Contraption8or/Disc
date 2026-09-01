@@ -24,9 +24,9 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
 
   // A handful of themes (Tron, Sunset, Emerald, Abyss, Ember, Midnight,
   // Blush — see requiresAcrylic in themes.js) use translucent panels over
-  // a real transparent/frameless Windows window (see useAcrylic and
-  // hasNativeTitleBar in electron/main.js) — a startup-time window
-  // setting, so switching either into OR out of one persists the
+  // a real transparent Windows window (see useAcrylic in electron/main.js)
+  // — a startup-time window setting, so switching either into OR out of
+  // one persists the
   // preference right away but can't take effect until the window is
   // recreated. Both directions genuinely need a restart here, not just
   // "turning on": a window that's still transparent/frameless from an

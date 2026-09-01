@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import ThemeSwitcher from "./ThemeSwitcher.jsx";
 import LayoutPresets from "./LayoutPresets.jsx";
 import VolumeControl from "./VolumeControl.jsx";
@@ -35,26 +35,24 @@ export default function TitleBar({
   openPanelIds,
   onTogglePanel,
 }) {
-  // Only windows on a non-acrylic theme actually get a real native frame
-  // on Windows (see hasNativeTitleBar in electron/main.js — acrylic themes
-  // need transparent:true, which Electron only honors on a frameless
-  // window). Where it's real, this row is no longer the OS title bar —
-  // it's an ordinary in-page toolbar sitting under Windows' own native
-  // one, kept non-draggable (see .titlebar--no-native-drag in
-  // TitleBar.css) so it doesn't invite a second, non-functional "drag"
-  // region alongside the real one above it. Everywhere else (macOS/Linux,
-  // or Windows on an acrylic theme) this stays the actual OS-recognized
-  // draggable title bar, same as before.
-  const [hasNativeTitleBar, setHasNativeTitleBar] = useState(false);
+  // The window-snap system (see electron/main.js) needs to know exactly
+  // when a title-bar drag actually ends, not just "no movement for a
+  // while" — that's just a fallback there. A real OS-level window drag
+  // (started by -webkit-app-region:drag) still delivers this window's own
+  // mouseup once the button is released, since the window tracks the
+  // cursor throughout, so a plain document-level listener catches it
+  // reliably without needing to know whether a drag is even in progress —
+  // main.js only acts on this if one actually was.
   useEffect(() => {
-    window.disc?.hasNativeTitleBar().then(setHasNativeTitleBar);
+    function handleMouseUp() {
+      window.disc?.notifyMouseUp();
+    }
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => document.removeEventListener("mouseup", handleMouseUp);
   }, []);
 
   return (
-    <div
-      className={"titlebar" + (hasNativeTitleBar ? " titlebar--no-native-drag" : "")}
-      onDoubleClick={() => window.disc?.windowToggleMaximize()}
-    >
+    <div className="titlebar" onDoubleClick={() => window.disc?.windowToggleMaximize()}>
       <div className="titlebar__brand">
         <span className="titlebar__mark">◎</span>
         <span className="titlebar__name">Disc</span>
@@ -153,15 +151,8 @@ export default function TitleBar({
           onChange={onThemeChange}
           onPreviewCancel={onThemePreviewCancel}
         />
-        {/* On Windows the real native title bar (see electron/main.js) has
-            its own minimize/maximize/close already — these would just be
-            redundant, and clicking them wouldn't get Snap behavior anyway. */}
-        {!hasNativeTitleBar && (
-          <>
-            <div className="titlebar__divider" />
-            <WindowControls />
-          </>
-        )}
+        <div className="titlebar__divider" />
+        <WindowControls />
       </div>
     </div>
   );

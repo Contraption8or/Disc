@@ -1,0 +1,12 @@
+{
+  "name": "mouse-state",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows-only native addon: a single GetAsyncKeyState(VK_LBUTTON) check, used to detect exactly when a title-bar drag's mouse button is actually released — Chromium doesn't deliver a normal DOM mouseup for this kind of window drag, so there's no reliable way to know from JS/Electron APIs alone.",
+  "main": "index.js",
+  "gypfile": true,
+  "os": ["win32"],
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  }
+}

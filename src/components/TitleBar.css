@@ -11,15 +11,6 @@
   user-select: none;
 }
 
-/* On Windows this row sits under Windows' own real native title bar (see
-   the isWindows comment in electron/main.js createWindow) rather than
-   being the title bar itself — leaving it draggable would just add a
-   second, non-functional "fake" drag region with none of the real one's
-   Snap support, which is more confusing than useful. */
-.titlebar--no-native-drag {
-  -webkit-app-region: no-drag;
-}
-
 .titlebar__brand {
   display: flex;
   align-items: center;

@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld("disc", {
   windowToggleMaximize: () => ipcRenderer.invoke("disc:window-toggle-maximize"),
   windowIsMaximized: () => ipcRenderer.invoke("disc:window-is-maximized"),
   windowClose: () => ipcRenderer.send("disc:window-close"),
+  setSnapAccentColor: (hex) => ipcRenderer.send("disc:set-snap-accent-color", hex),
+  notifyMouseUp: () => ipcRenderer.send("disc:mouse-up"),
   onWindowMaximizedChanged: (callback) => {
     const listener = (_event, isMaximized) => callback(isMaximized);
     ipcRenderer.on("disc:window-maximized-changed", listener);
@@ -64,7 +66,6 @@ contextBridge.exposeInMainWorld("disc", {
   setAcrylicEnabled: (enabled) => ipcRenderer.invoke("disc:set-acrylic-enabled", enabled),
   isAcrylicWindowActive: () => ipcRenderer.invoke("disc:is-acrylic-window-active"),
   supportsAcrylic: () => ipcRenderer.invoke("disc:supports-acrylic"),
-  hasNativeTitleBar: () => ipcRenderer.invoke("disc:has-native-title-bar"),
   getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
