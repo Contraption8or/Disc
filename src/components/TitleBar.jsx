@@ -58,7 +58,16 @@ export default function TitleBar({
         <span className="titlebar__name">Disc</span>
       </div>
 
-      <div className="titlebar__actions">
+      {/* stopPropagation here, not just on WindowControls below — every
+          button in here (theme switcher, settings, pin, volume, ...) sits
+          inside the outer .titlebar div, whose onDoubleClick maximizes the
+          window. -webkit-app-region:no-drag (see TitleBar.css) only tells
+          the OS not to treat this area as a drag handle; it does nothing
+          to a React double-click event bubbling up the DOM, so double-
+          clicking any control in here was reaching that handler too —
+          rapidly clicking the theme button twice was just the one someone
+          happened to notice, not the only one affected. */}
+      <div className="titlebar__actions" onDoubleClick={(e) => e.stopPropagation()}>
         <WindowsMenu
           knownPanels={knownPanels}
           openPanelIds={openPanelIds}

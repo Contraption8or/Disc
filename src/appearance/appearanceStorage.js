@@ -7,6 +7,7 @@ export const DEFAULT_APPEARANCE = {
   gradientIntensity: 0.5,
   gradientMode: "auto", // "auto" | "manual"
   gradientAngle: 180,
+  glassButtons: false,
 };
 
 const STORAGE_KEY = "disc.appearance";

@@ -2,7 +2,7 @@
   "name": "mouse-state",
   "version": "1.0.0",
   "private": true,
-  "description": "Windows-only native addon: a single GetAsyncKeyState(VK_LBUTTON) check, used to detect exactly when a title-bar drag's mouse button is actually released — Chromium doesn't deliver a normal DOM mouseup for this kind of window drag, so there's no reliable way to know from JS/Electron APIs alone.",
+  "description": "Windows-only native addon with two small win32 helpers Electron has no JS API for: a GetAsyncKeyState(VK_LBUTTON) check (detects when a title-bar drag's mouse button is actually released — Chromium doesn't deliver a normal DOM mouseup for this kind of window drag), and a DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE) call (forces Windows 11's native rounded-corner clipping on Disc's frameless window, which opts itself out of it by default).",
   "main": "index.js",
   "gypfile": true,
   "os": ["win32"],

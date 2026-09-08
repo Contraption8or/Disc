@@ -188,6 +188,58 @@ const isWindows11 =
 const useAcrylic = isWindows11 && Boolean(startupSettings.useAcrylic);
 const isWindows = process.platform === "win32";
 
+// --- Rounded window corners ---------------------------------------------
+// Windows 11 rounds every normal top-level window's corners by default,
+// but a frameless (WS_POPUP-style) BrowserWindow like Disc's opts itself
+// out of that automatically — DWM clips the window's actual surface, not
+// something CSS can influence, so getting Disc's corners to look like
+// every other window on the desktop needs the native
+// setWindowCornerPreference helper from native/mouse-state (see its
+// mouse_state.cc for why it lives in that addon).
+const DWMWCP_DEFAULT = 0;
+const DWMWCP_DONOTROUND = 1;
+const DWMWCP_ROUND = 2;
+
+// Tracks the corner state actually applied to each window so resize
+// events (which fire continuously while the user drags an edge) only
+// make the native call on an actual change, not on every pixel of drag.
+const appliedCornerPreference = new WeakMap();
+
+function applyWindowCornerPreference(win, preference) {
+  if (!isWindows11 || !mouseState?.setWindowCornerPreference) return;
+  if (!win || win.isDestroyed()) return;
+  if (appliedCornerPreference.get(win) === preference) return;
+  try {
+    mouseState.setWindowCornerPreference(win.getNativeWindowHandle(), preference);
+    appliedCornerPreference.set(win, preference);
+  } catch {
+    // Cosmetic only — never worth crashing over.
+  }
+}
+
+// A window "fills its display" when maximized OR (via our own snap
+// system's "top" zone, which resizes to the full work area via setBounds
+// rather than an actual OS-level maximize) sized to cover the display's
+// entire work area edge-to-edge. Either way it should look flush with
+// the screen — square corners, exactly like Windows' own maximized
+// windows — rather than visibly rounded ones cutting into the display.
+function windowFillsDisplay(win) {
+  if (win.isMaximized()) return true;
+  const bounds = win.getBounds();
+  const { workArea } = screen.getDisplayMatching(bounds);
+  return (
+    bounds.x <= workArea.x &&
+    bounds.y <= workArea.y &&
+    bounds.x + bounds.width >= workArea.x + workArea.width &&
+    bounds.y + bounds.height >= workArea.y + workArea.height
+  );
+}
+
+function updateWindowCorners(win) {
+  if (!win || win.isDestroyed()) return;
+  applyWindowCornerPreference(win, windowFillsDisplay(win) ? DWMWCP_DONOTROUND : DWMWCP_ROUND);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -222,12 +274,20 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
 
-  mainWindow.on("maximize", () => {
-    mainWindow?.webContents.send("disc:window-maximized-changed", true);
-  });
-  mainWindow.on("unmaximize", () => {
-    mainWindow?.webContents.send("disc:window-maximized-changed", false);
-  });
+  // "Maximized" no longer means real OS-level win.maximize() at all (see
+  // disc:window-toggle-maximize below for why) — these two just keep
+  // corner-rounding in sync on the off chance something outside this
+  // file's own code puts the window into that state (Win+Up, say).
+  // disc:window-maximized-changed is sent from the toggle handler now,
+  // not here, so there's exactly one source of truth for that.
+  mainWindow.on("maximize", () => updateWindowCorners(mainWindow));
+  mainWindow.on("unmaximize", () => updateWindowCorners(mainWindow));
+  // Covers every other way the window's size can change — our own snap
+  // system's release-triggered setBounds (including the "top" zone,
+  // which fills the work area without ever calling win.maximize()) and
+  // the user manually dragging an edge — so corners stay in sync with
+  // whatever's actually on screen, not just real OS-level maximize.
+  mainWindow.on("resize", () => updateWindowCorners(mainWindow));
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -240,6 +300,13 @@ function createWindow() {
   });
 
   setupWindowSnap(mainWindow);
+  updateWindowCorners(mainWindow);
+  // Created up front, not lazily on the first drag — a data: URL loads
+  // near-instantly, but "near" still isn't zero, and creating this
+  // window for the first time in the middle of the very first drag was
+  // one of the things contributing to that first preview looking like a
+  // flicker rather than a clean fade in.
+  ensureSnapPreviewWindow();
 }
 
 // --- Window snapping ---------------------------------------------------
@@ -312,121 +379,40 @@ function markProgrammaticMove() {
   snapIgnoreMoveUntil = Date.now() + SNAP_IGNORE_MOVE_MS;
 }
 
-// The actual snap/un-snap animation. Earlier versions animated something
-// *live* — first the real window's own bounds directly (~60 setBounds
-// calls a second, visibly staggery, since Windows redoes a full layout/
-// repaint of Disc's entire real UI on every one), then a CSS clip-path on
-// the real page content (still not smooth: Disc's own live content —
-// waveform canvases, the Pomodoro timer ticking, hover states — can force
-// its own repaints regardless of will-change, competing with the
-// animation for main-thread time). This version instead animates a
-// static PNG snapshot of the window taken a moment ago, so nothing live
-// is involved in the animation at all — the real window resizes once,
-// instantly, invisibly, while a plain <img> overlay (transform-only, the
-// one CSS animation Chromium can *always* run purely on the compositor,
-// no repaint possible regardless of page complexity) plays the actual
-// visible motion on top of it, then gets removed to reveal the real,
-// already-correctly-sized window underneath.
-const SNAP_ANIM_MS = 220;
-// Same easing curve as every modal's open animation elsewhere in Disc
-// (see disc-modal-scale-in in src/appearance/motion.css) — keeps this
-// feeling like part of the same app rather than a bolted-on effect.
-const SNAP_ANIM_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
-const SNAP_GHOST_ID = "disc-snap-ghost";
-
-async function animateSnapCrop(win, from, to) {
+// Snap/un-snap just resizes the window outright — no animation. Earlier
+// versions tried a few: tweening the real window's own bounds directly
+// (~60 setBounds calls a second, visibly staggery, since Windows redoes
+// a full layout/repaint of Disc's entire real UI on every one), a CSS
+// clip-path on the real page content (still not smooth — Disc's own
+// live content can force its own repaints regardless of will-change,
+// competing with the animation for main-thread time), then a FLIP
+// transform played over a static snapshot of the window (smooth, but
+// still felt "clunky" — an extra visual event on top of what's already
+// an instant, deliberate action). Landed here: the window just resizes,
+// same as clicking a normal maximize/restore button anywhere else.
+function resizeSnapTarget(win, to) {
   if (win.isDestroyed()) return;
-
-  let dataUrl = null;
-  try {
-    const image = await win.capturePage();
-    if (!image.isEmpty()) {
-      // Downscaled and JPEG-compressed rather than a full-resolution
-      // PNG — this is only ever on screen for ~220ms during a fast
-      // transform, so full fidelity buys nothing but latency. Capturing,
-      // PNG-encoding, and IPC-transferring a full-res snapshot (a
-      // multi-MB base64 string for anything near fullscreen) was the
-      // real source of the ~500ms pause before the window even started
-      // resizing — none of that work was on the critical path for
-      // correctness, just for how much detail the ghost image carries.
-      const scale = Math.min(1, 640 / Math.max(1, from.width));
-      const small =
-        scale < 1
-          ? image.resize({
-              width: Math.round(from.width * scale),
-              height: Math.round(from.height * scale),
-            })
-          : image;
-      dataUrl = "data:image/jpeg;base64," + small.toJPEG(72).toString("base64");
-    }
-  } catch {
-    dataUrl = null;
-  }
-  if (win.isDestroyed()) return;
-
-  // No snapshot (capture failed, or there was nothing painted yet) —
-  // still resize correctly, just without anything to animate over it.
-  if (!dataUrl) {
-    markProgrammaticMove();
-    win.setBounds(to);
-    return;
-  }
-
-  // FLIP technique: the overlay's own box is sized to `to` from the
-  // start (matching the real window's soon-to-be-final size) and never
-  // resized again — all the motion is a single `transform`, scaling and
-  // translating that box so it first *looks* like it's sitting where/how
-  // large `from` was, then animating to identity (0,0 / 1,1), which
-  // visually reveals the full new size. transform is the one property
-  // that never needs layout or a repaint to animate, regardless of what
-  // will-change promises elsewhere — it's compositor math on an already-
-  // rasterized layer, every frame, guaranteed.
-  const dx = from.x - to.x;
-  const dy = from.y - to.y;
-  const sx = from.width / to.width;
-  const sy = from.height / to.height;
-
-  const setupScript = `
-    (function () {
-      var img = document.createElement('img');
-      img.id = ${JSON.stringify(SNAP_GHOST_ID)};
-      img.src = ${JSON.stringify(dataUrl)};
-      img.style.cssText =
-        'position:fixed;left:0;top:0;width:${to.width}px;height:${to.height}px;' +
-        'margin:0;z-index:2147483647;pointer-events:none;object-fit:fill;' +
-        'transform-origin:0 0;' +
-        'transform:translate(${dx}px,${dy}px) scale(${sx},${sy});' +
-        'will-change:transform;transition:none;';
-      document.documentElement.appendChild(img);
-      void img.offsetWidth; // force layout so this starting transform is actually committed, not just queued
-    })();
-  `;
-  try {
-    await win.webContents.executeJavaScript(setupScript);
-  } catch {
-    markProgrammaticMove();
-    win.setBounds(to);
-    return;
-  }
-  if (win.isDestroyed()) return;
-
   markProgrammaticMove();
   win.setBounds(to);
+}
 
-  const revealScript = `
-    (function () {
-      var img = document.getElementById(${JSON.stringify(SNAP_GHOST_ID)});
-      if (!img) return;
-      img.style.transition = 'transform ${SNAP_ANIM_MS}ms ${SNAP_ANIM_EASING}';
-      requestAnimationFrame(function () {
-        img.style.transform = 'translate(0px, 0px) scale(1, 1)';
-      });
-      setTimeout(function () {
-        if (img.parentNode) img.parentNode.removeChild(img);
-      }, ${SNAP_ANIM_MS + 40});
-    })();
-  `;
-  win.webContents.executeJavaScript(revealScript).catch(() => {});
+// Where a restored (un-snapped) window lands, given the size it's being
+// restored to — horizontally centered on its current display, at
+// whatever height the (still snapped/maximized) window's own top edge
+// is currently at, not the monitor's top edge. Every snap zone (see
+// snapZoneBounds) starts flush with the display's own left edge, so just
+// keeping the window's current x on restore meant it always landed in
+// the top-left corner of the screen no matter which zone or the
+// maximize button it came from — centering just the x reads as a
+// deliberate "here's your window back" placement instead, without
+// moving it somewhere its top edge wasn't already.
+function unsnapPosition(win, size) {
+  const current = win.getBounds();
+  const { workArea } = screen.getDisplayMatching(current);
+  return {
+    x: Math.round(workArea.x + (workArea.width - size.width) / 2),
+    y: current.y,
+  };
 }
 
 function getSnapZone(point) {
@@ -453,12 +439,66 @@ function hexToRgbString(hex) {
   return `${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}`;
 }
 
+// How long the preview fades in/out over — kept in one place since both
+// the CSS transition duration and the JS timer that waits for it to
+// finish before actually hiding the window need to agree.
+const SNAP_PREVIEW_FADE_MS = 140;
+// How far the rounded "card" sits in from the zone's true edges.
+const SNAP_PREVIEW_INSET = 10;
+
 function snapPreviewHtml() {
-  return (
-    "data:text/html,<style>html,body{margin:0;width:100%;height:100%;" +
-    `background:rgba(${snapAccentRgb},0.28);border:2px solid rgba(${snapAccentRgb},0.9);` +
-    "box-sizing:border-box;}</style>"
-  );
+  // A rounded, inset "card" rather than a flat edge-to-edge rectangle —
+  // matches how Windows' own snap-assist preview looks (a soft-shadowed
+  // rounded panel floating a few pixels in from the zone's true edges),
+  // which reads as far more deliberate than a plain colored box.
+  //
+  // The card's left/top/width/height are plain (untransitioned) inline
+  // styles set by showSnapPreview below, in coordinates *relative to
+  // this window* — deliberately not `inset`/percentage-based, since this
+  // window itself no longer resizes per zone (see the comment on
+  // showSnapPreview for why: resizing a transparent BrowserWindow is
+  // what was actually producing the "pops twice" look, not the fade
+  // logic). Only opacity/transform are transitioned, so switching which
+  // zone is showing repositions the card instantly while the fade stays
+  // smooth.
+  const html = `
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      .zone {
+        position: absolute;
+        left: 0px;
+        top: 0px;
+        width: 0px;
+        height: 0px;
+        border-radius: 14px;
+        background: linear-gradient(165deg,
+          rgba(${snapAccentRgb}, 0.32),
+          rgba(${snapAccentRgb}, 0.16));
+        border: 1.5px solid rgba(${snapAccentRgb}, 0.85);
+        box-shadow:
+          0 16px 40px rgba(0, 0, 0, 0.35),
+          0 2px 8px rgba(0, 0, 0, 0.2),
+          inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        opacity: 0;
+        transform: scale(0.96);
+        transform-origin: center center;
+        transition: opacity ${SNAP_PREVIEW_FADE_MS}ms cubic-bezier(0.16, 1, 0.3, 1),
+          transform ${SNAP_PREVIEW_FADE_MS}ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .zone.zone--visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+    </style>
+    <div class="zone" id="zone"></div>
+  `;
+  return "data:text/html," + encodeURIComponent(html);
 }
 
 function snapZoneBounds(zone) {
@@ -483,7 +523,16 @@ function snapZoneBounds(zone) {
 
 function ensureSnapPreviewWindow() {
   if (snapPreviewWindow && !snapPreviewWindow.isDestroyed()) return snapPreviewWindow;
+  // Sized to the *whole primary display* up front, not to any particular
+  // zone — see showSnapPreview for why: this window's own OS-level
+  // bounds should essentially never change once created (resizing a
+  // transparent window is what produces a visible flash, since DWM has
+  // no valid composited content for the new size until the next repaint
+  // lands). Which zone is actually showing, and where within this
+  // window, is purely an in-page position from here on.
+  const initialBounds = screen.getPrimaryDisplay().bounds;
   snapPreviewWindow = new BrowserWindow({
+    ...initialBounds,
     frame: false,
     transparent: true,
     resizable: false,
@@ -502,13 +551,132 @@ function ensureSnapPreviewWindow() {
   // window underneath it.
   snapPreviewWindow.setIgnoreMouseEvents(true);
   snapPreviewWindow.loadURL(snapPreviewHtml());
+  // Shown exactly once, right here, and never hidden again for the rest
+  // of the app's life (see showSnapPreview/hideSnapPreview — from here
+  // on, "showing"/"hiding" the zone is purely the CSS opacity transition
+  // on the .zone div, not the window itself). A hidden BrowserWindow
+  // stops compositing entirely, so the very first frame after a later
+  // show()/showInactive() call can lag behind — Chromium hasn't
+  // re-rendered yet, so whatever DWM had cached for that window (which
+  // can be genuinely blank/undefined content) gets presented for a
+  // frame first. That's an actual flash no CSS transition can paper
+  // over, since it happens *before* any of this window's own content is
+  // involved. Showing it once here, at content-transparent/opacity:0,
+  // long before any real drag, means that first-frame cost is paid at
+  // startup where nothing is on screen to flash — never during a drag.
+  snapPreviewWindow.showInactive();
   return snapPreviewWindow;
 }
 
+// Whether the .zone div's 'zone--visible' class is currently applied —
+// tracked here rather than read back from the window, since the window
+// itself is always "visible" now (see the comment above) and no longer
+// says anything about whether a zone is actually showing.
+let snapPreviewShown = false;
+
+function setSnapPreviewVisibleClass(win, visible) {
+  if (!win || win.isDestroyed()) return;
+  const script = `
+    (function () {
+      var el = document.getElementById('zone');
+      if (!el) return;
+      el.classList[${visible ? "'add'" : "'remove'"}]('zone--visible');
+    })();
+  `;
+  win.webContents.executeJavaScript(script).catch(() => {});
+}
+
+// Grazing a zone boundary for a single 'move' event during a real drag
+// (the cursor briefly reads as "in no zone" right at the edge between
+// two of them) used to hide the preview immediately, only to show it
+// again a moment later — visually a hide/show pop rather than the zone
+// just staying up. This debounce holds off actually starting the
+// fade-out until the cursor has stayed out of every zone for a beat;
+// showSnapPreview cancels it outright the moment a zone reappears.
+const SNAP_PREVIEW_HIDE_DEBOUNCE_MS = 90;
+let snapPreviewHideDebounceTimer = null;
+
+function showSnapPreview(zone) {
+  clearTimeout(snapPreviewHideDebounceTimer);
+  snapPreviewHideDebounceTimer = null;
+
+  const preview = ensureSnapPreviewWindow();
+
+  // The window itself only ever gets resized when the drag has actually
+  // moved to a *different display* — essentially never on a single
+  // monitor, which is the common case. Which zone is showing, and where
+  // within this window, is purely an in-page position from here (see
+  // left/top/width/height below), so a plain zone-to-zone change never
+  // touches the window's bounds at all.
+  const displayBounds = zone.display.bounds;
+  const current = preview.getBounds();
+  const sameDisplay =
+    current.x === displayBounds.x &&
+    current.y === displayBounds.y &&
+    current.width === displayBounds.width &&
+    current.height === displayBounds.height;
+  if (!sameDisplay) preview.setBounds(displayBounds);
+
+  const zoneBounds = snapZoneBounds(zone);
+  const left = zoneBounds.x - displayBounds.x + SNAP_PREVIEW_INSET;
+  const top = zoneBounds.y - displayBounds.y + SNAP_PREVIEW_INSET;
+  const width = zoneBounds.width - SNAP_PREVIEW_INSET * 2;
+  const height = zoneBounds.height - SNAP_PREVIEW_INSET * 2;
+
+  const alreadyShown = snapPreviewShown;
+  snapPreviewShown = true;
+
+  const script = alreadyShown
+    ? // Already showing a zone (just switching which one is
+      // highlighted) — reposition instantly, no fade involved at all.
+      `
+      (function () {
+        var el = document.getElementById('zone');
+        if (!el) return;
+        el.style.left = '${left}px';
+        el.style.top = '${top}px';
+        el.style.width = '${width}px';
+        el.style.height = '${height}px';
+      })();
+    `
+    : // Newly appearing — position it first, then fade in. rAF so the
+      // "start invisible" position and the "become visible" class
+      // change land in different frames; without that gap there's
+      // nothing for the transition to actually animate from.
+      `
+      (function () {
+        var el = document.getElementById('zone');
+        if (!el) return;
+        el.style.left = '${left}px';
+        el.style.top = '${top}px';
+        el.style.width = '${width}px';
+        el.style.height = '${height}px';
+        requestAnimationFrame(function () {
+          el.classList.add('zone--visible');
+        });
+      })();
+    `;
+  preview.webContents.executeJavaScript(script).catch(() => {});
+}
+
+function requestHideSnapPreview() {
+  clearTimeout(snapPreviewHideDebounceTimer);
+  snapPreviewHideDebounceTimer = setTimeout(() => {
+    snapPreviewHideDebounceTimer = null;
+    hideSnapPreview();
+  }, SNAP_PREVIEW_HIDE_DEBOUNCE_MS);
+}
+
+// Just removes the CSS class — the window itself is never hidden (see
+// ensureSnapPreviewWindow), so this is a plain, always-live CSS opacity
+// transition playing out on screen, guaranteed to actually be visible as
+// a fade-out rather than racing a win.hide() call to get there first.
 function hideSnapPreview() {
-  if (snapPreviewWindow && !snapPreviewWindow.isDestroyed() && snapPreviewWindow.isVisible()) {
-    snapPreviewWindow.hide();
-  }
+  clearTimeout(snapPreviewHideDebounceTimer);
+  snapPreviewHideDebounceTimer = null;
+  if (!snapPreviewShown) return;
+  snapPreviewShown = false;
+  setSnapPreviewVisibleClass(snapPreviewWindow, false);
 }
 
 // Only ever called once per drag — the window's actual size/position is
@@ -532,22 +700,18 @@ function finishSnapDrag() {
       // letting go of a free size in between must all still restore back
       // to the one true original, not to whichever snap preceded this.
       if (!snapIsSnapped) snapFreeBounds = snapTargetWindow.getBounds();
-      animateSnapCrop(
-        snapTargetWindow,
-        snapTargetWindow.getBounds(),
-        snapZoneBounds(snapPendingZone)
-      );
+      resizeSnapTarget(snapTargetWindow, snapZoneBounds(snapPendingZone));
       snapIsSnapped = true;
     } else if (snapIsSnapped && snapFreeBounds) {
       // Released away from any zone while the window was still snapped —
-      // un-snap: restore the original *size*, but keep whatever position
-      // the native drag actually left the window at (its top-left tracks
-      // the cursor throughout a normal drag, so this lands close to a
-      // natural drop point without needing to compute one).
-      const current = snapTargetWindow.getBounds();
-      animateSnapCrop(snapTargetWindow, current, {
-        x: current.x,
-        y: current.y,
+      // un-snap: restore the original size, centered at the top of the
+      // display (see unsnapPosition) rather than wherever the native
+      // drag happened to leave its top-left corner — every zone starts
+      // flush with the display's left edge, so that always put the
+      // restored window in the top-left corner regardless of which edge
+      // it was dragged away from.
+      resizeSnapTarget(snapTargetWindow, {
+        ...unsnapPosition(snapTargetWindow, snapFreeBounds),
         width: snapFreeBounds.width,
         height: snapFreeBounds.height,
       });
@@ -590,11 +754,20 @@ function setupWindowSnap(win) {
     if (zoneType === snapActiveZoneType) return;
     snapActiveZoneType = zoneType;
     if (zone) {
-      const preview = ensureSnapPreviewWindow();
-      preview.setBounds(snapZoneBounds(zone));
-      if (!preview.isVisible()) preview.showInactive();
+      showSnapPreview(zone);
     } else {
-      hideSnapPreview();
+      requestHideSnapPreview();
+      // Tried restoring the pre-snap size right here, the instant the
+      // drag leaves the zone, instead of waiting for release — even as a
+      // single, one-shot, ignore-window-guarded setBounds call, it was
+      // intermittent (reliable on a fast drag, prone to leaving the drag
+      // stuck/desynced on a slow one). That's the signature of a real
+      // race, not a logic bug: Chromium's own app-region:drag apparently
+      // drives this frameless window's position through a different path
+      // than our setBounds() call, and the two were competing for
+      // authority over it mid-drag. Reverted — see finishSnapDrag's
+      // comment for why every other resize in this file waits for
+      // release, and this is no exception after all.
     }
   });
 }
@@ -603,6 +776,9 @@ function teardownWindowSnap() {
   clearTimeout(snapMoveTimer);
   clearInterval(snapPollTimer);
   snapPollTimer = null;
+  clearTimeout(snapPreviewHideDebounceTimer);
+  snapPreviewHideDebounceTimer = null;
+  snapPreviewShown = false;
   snapPendingZone = null;
   snapMoveStreak = 0;
   snapActiveZoneType = null;
@@ -638,6 +814,12 @@ ipcMain.on("disc:set-snap-accent-color", (_event, hex) => {
   snapAccentRgb = rgb;
   if (snapPreviewWindow && !snapPreviewWindow.isDestroyed()) {
     snapPreviewWindow.loadURL(snapPreviewHtml());
+    // The fresh page starts back at "no zone shown" (opacity: 0, no
+    // class) regardless of whatever was tracked before the reload — keep
+    // that bookkeeping in sync so a zone right after a theme change is
+    // treated as newly appearing (fades in) rather than "already shown"
+    // (which would just reposition an invisible div with no fade at all).
+    snapPreviewShown = false;
   }
 });
 
@@ -1094,18 +1276,48 @@ ipcMain.on("disc:window-minimize", () => {
   mainWindow?.minimize();
 });
 
+// "Maximize" deliberately never calls the real win.maximize() — it just
+// snaps to the full-work-area "top" zone via the exact same machinery a
+// drag-to-the-top-edge uses (snapIsSnapped/snapFreeBounds/
+// resizeSnapTarget/snapZoneBounds, all defined above), so this button is
+// really just "drag to the top edge and let go" triggered by a click
+// instead of a drag. That's not just for consistency: a genuinely
+// WS_MAXIMIZE'd frameless window turned out not to cooperate with this
+// app's custom app-region:drag dragging at all — a couple of earlier
+// attempts (see git history) to un-maximize a real OS-maximized window
+// right as a drag started kept racing the native move loop the same way
+// mid-drag setBounds calls always have in this file, sometimes leaving
+// the window stuck. Never actually entering real WS_MAXIMIZE sidesteps
+// that entirely, and reuses drag-to-zone logic that's already proven
+// solid — including, for free, restoring on drag-away exactly like any
+// other snap zone.
 ipcMain.handle("disc:window-toggle-maximize", () => {
-  if (!mainWindow) return false;
-  if (mainWindow.isMaximized()) {
-    mainWindow.unmaximize();
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (snapIsSnapped) {
+    // Same "un-snap" as dragging away from any snap zone (see
+    // finishSnapDrag), just triggered by the button instead of a drag —
+    // restore the pre-snap size, centered horizontally (see
+    // unsnapPosition).
+    const current = mainWindow.getBounds();
+    const size = {
+      width: snapFreeBounds?.width ?? current.width,
+      height: snapFreeBounds?.height ?? current.height,
+    };
+    resizeSnapTarget(mainWindow, { ...unsnapPosition(mainWindow, size), ...size });
+    snapIsSnapped = false;
+    snapFreeBounds = null;
   } else {
-    mainWindow.maximize();
+    snapFreeBounds = mainWindow.getBounds();
+    const display = screen.getDisplayMatching(snapFreeBounds);
+    resizeSnapTarget(mainWindow, snapZoneBounds({ type: "top", display }));
+    snapIsSnapped = true;
   }
-  return mainWindow.isMaximized();
+  mainWindow.webContents.send("disc:window-maximized-changed", snapIsSnapped);
+  return snapIsSnapped;
 });
 
 ipcMain.handle("disc:window-is-maximized", () => {
-  return mainWindow?.isMaximized() ?? false;
+  return snapIsSnapped;
 });
 
 ipcMain.on("disc:window-close", () => {

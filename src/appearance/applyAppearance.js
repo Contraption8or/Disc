@@ -20,6 +20,15 @@ export function applyAppearanceSettings(settings) {
   // attribute and disables transitions/animations app-wide.
   root.setAttribute("data-reduce-motion", settings.reduceMotion ? "on" : "off");
 
+  // Liquid Glass buttons: a curated set of chrome-level buttons (title
+  // bar, toolbar, dialogs — see the selector list in appearance.css)
+  // gets a frosted/translucent treatment. Deliberately NOT a blanket
+  // `button` rule: the same treatment applied to every per-row button in
+  // a long track list would mean dozens of live backdrop-filter layers
+  // on screen at once, which is a real scroll-performance cost, not just
+  // visual noise.
+  root.setAttribute("data-glass", settings.glassButtons ? "on" : "off");
+
   // Spill: a curated set of accent-colored elements and color dots/
   // swatches (see appearance.css) read this intensity variable for their
   // glow strength.

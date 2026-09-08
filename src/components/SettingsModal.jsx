@@ -363,6 +363,22 @@ export default function SettingsModal({ onClose }) {
         </label>
 
         <label className="settings-modal__toggle-row">
+          <span>
+            Liquid Glass buttons
+            <span className="settings-modal__hint">
+              {" "}
+              — a frosted, translucent look for the title bar, toolbar, and
+              other main buttons
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={appearanceSettings.glassButtons}
+            onChange={(e) => onSetAppearance({ glassButtons: e.target.checked })}
+          />
+        </label>
+
+        <label className="settings-modal__toggle-row">
           <span>Spill</span>
           <input
             type="checkbox"

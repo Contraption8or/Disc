@@ -10,7 +10,8 @@
         [
           "OS=='win'",
           {
-            "msbuild_toolset": "v143"
+            "msbuild_toolset": "v143",
+            "libraries": ["-ldwmapi.lib"]
           }
         ]
       ]

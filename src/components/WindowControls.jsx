@@ -12,7 +12,12 @@ export default function WindowControls() {
   }, []);
 
   return (
-    <div className="window-controls" onDoubleClick={(e) => e.stopPropagation()}>
+    // The double-click-bubbles-to-the-titlebar-and-maximizes problem this
+    // guarded against is now handled once, for every title bar control,
+    // by .titlebar__actions in TitleBar.jsx — kept here as plain markup
+    // rather than a second stopPropagation to avoid two places claiming
+    // ownership of the same fix.
+    <div className="window-controls">
       <button
         className="window-controls__button"
         title="Minimize"
