@@ -264,6 +264,19 @@ function createWindow() {
       nodeIntegration: false,
       // Needed later for native drag-out of files into Premiere Pro.
       // Left here as a marker for Phase 3 (drag-to-Premiere).
+      // The Pomodoro timer's real countdown (see PomodoroContext.jsx)
+      // ticks here, in the main window, even when the popup is the only
+      // thing the user is actually looking at — Chromium throttles a
+      // window's JS timers (and, per user reports, its BroadcastChannel
+      // message handling right along with them) hard once it's occluded
+      // by other apps, which is exactly the normal case for this window
+      // while someone's working in Premiere with just the Pomodoro popup
+      // visible. That's what "pausing weirdly, and not un-pausing until
+      // I move [a] window around" was — dragging happens to briefly force
+      // Chromium/Windows to stop throttling it. Disabled outright so the
+      // real timer keeps ticking on schedule regardless of focus/
+      // visibility.
+      backgroundThrottling: false,
     },
   });
 
@@ -849,6 +862,13 @@ function createPomodoroWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Same reasoning as the main window's own backgroundThrottling —
+      // this popup is meant to sit visible-but-unfocused (often pinned
+      // on top) while the user works in another app entirely, which is
+      // exactly the situation Chromium throttles a renderer hardest in.
+      // Its BroadcastChannel state updates and command sends need to go
+      // through promptly regardless.
+      backgroundThrottling: false,
     },
   });
 
