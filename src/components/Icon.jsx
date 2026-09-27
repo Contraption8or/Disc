@@ -254,6 +254,35 @@ const ICONS = {
       <path d="M4.5 19.5 11 13" />
     </g>
   ),
+  image: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+      <circle cx="9" cy="10" r="1.7" />
+      <path d="m20.5 16-4.8-4.8L6 19.5" />
+    </g>
+  ),
+  eye: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </g>
+  ),
+  eyeOff: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.9 5.7A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.9 3.6M6.4 7.4A15.6 15.6 0 0 0 2.5 12S6 18.5 12 18.5c1.5 0 2.9-.4 4.1-1" />
+      <path d="M9.9 9.9a2.8 2.8 0 0 0 4 4M3.5 3.5l17 17" />
+    </g>
+  ),
+  // Two arrows pointing in toward each other — "shrink to compact mode".
+  // (compact, above, is the outward-pointing "expand" version.)
+  compress: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 4.5V10h5.5" />
+      <path d="M14 10 20.5 3.5" />
+      <path d="M10 19.5V14H4.5" />
+      <path d="M10 14 3.5 20.5" />
+    </g>
+  ),
   lockClosed: (
     <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
       <rect x="5" y="11" width="14" height="9.5" rx="1.6" />

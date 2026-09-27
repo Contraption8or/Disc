@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import PomodoroPopup from "./components/PomodoroPopup.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import "./index.css";
 
 // The floating Pomodoro widget (electron/main.js's createPomodoroWindow)
@@ -14,6 +15,6 @@ const isPomodoroWindow = new URLSearchParams(window.location.search).has(
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    {isPomodoroWindow ? <PomodoroPopup /> : <App />}
+    <ErrorBoundary>{isPomodoroWindow ? <PomodoroPopup /> : <App />}</ErrorBoundary>
   </React.StrictMode>
 );

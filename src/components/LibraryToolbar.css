@@ -3,8 +3,8 @@
   align-items: center;
   flex-wrap: wrap;
   row-gap: var(--space-2);
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  column-gap: 10px;
+  padding: 10px var(--space-3);
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -18,9 +18,17 @@
   background: var(--bg-panel-alt);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  padding: 0 10px;
+  height: 30px;
   min-width: 220px;
-  flex-shrink: 0;
+  flex: 1 1 220px;
+  max-width: 360px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.library-toolbar__search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .library-toolbar__search-icon {
@@ -43,12 +51,14 @@
 
 .library-toolbar__button {
   flex-shrink: 0;
+  height: 30px;
+  white-space: nowrap;
   background: var(--accent);
   box-shadow: var(--spill-shadow, none);
   color: var(--accent-text);
   border: none;
   border-radius: var(--radius-sm);
-  padding: 7px 12px;
+  padding: 0 12px;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -113,37 +123,9 @@
 
 .library-toolbar__divider {
   width: 1px;
-  align-self: stretch;
+  height: 16px;
+  align-self: center;
   background: var(--border-color);
-  flex-shrink: 0;
-}
-
-.library-toolbar__label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.library-toolbar__bpm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.library-toolbar__bpm input[type="range"] {
-  width: 90px;
-  accent-color: var(--accent);
-}
-
-.library-toolbar__bpm-value {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  width: 28px;
-  text-align: center;
   flex-shrink: 0;
 }
 

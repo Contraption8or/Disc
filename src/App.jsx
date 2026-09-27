@@ -16,6 +16,7 @@ import ConvertModal from "./components/ConvertModal.jsx";
 import OggLinkPromptModal from "./components/OggLinkPromptModal.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import PomodoroPanel from "./components/PomodoroPanel.jsx";
+import ImagePanel from "./components/ImagePanel.jsx";
 import { PomodoroProvider } from "./context/PomodoroContext.jsx";
 import { DiscContext } from "./context/DiscContext.jsx";
 import { THEMES, DEFAULT_THEME } from "./themes/themes.js";
@@ -31,7 +32,6 @@ import {
 } from "./layouts/layoutPresets.js";
 import { loadTags, saveTags, loadTrackTags, saveTrackTags } from "./tags/tagStorage.js";
 import { loadTrackNotes, saveTrackNotes } from "./notes/noteStorage.js";
-import { loadTrackOverrides, saveTrackOverrides } from "./audio/overrideStorage.js";
 import { loadTrackSections, saveTrackSections } from "./audio/sectionStorage.js";
 import { deleteSectionDrag } from "./audio/sectionDrag.js";
 import { loadCollections, saveCollections } from "./collections/collectionStorage.js";
@@ -150,7 +150,7 @@ export default function App() {
     } catch {
       // fall through to default below
     }
-    return [{ id: "primary", name: "Sounds", deletable: false }];
+    return [{ id: "primary", name: "Music", deletable: false }];
   });
   // A just-deleted group, kept around briefly so it can be undone — see
   // handleDeleteFolderGroup/handleUndoDeleteFolderGroup below.
@@ -163,6 +163,8 @@ export default function App() {
   const [pendingDeletedTag, setPendingDeletedTag] = useState(null); // { tag, trackIds } | null
   const undoTagTimeoutRef = useRef(null);
   const [customFolderTracks, setCustomFolderTracks] = useState({});
+  const customFolderTracksRef = useRef(customFolderTracks);
+  customFolderTracksRef.current = customFolderTracks;
   const watchedCustomIdsRef = useRef(new Set());
 
   // --- Tagging state --------------------------------------------------
@@ -171,16 +173,15 @@ export default function App() {
 
   // --- Notes (freeform per-track text) --------------------------------
   const [trackNotes, setTrackNotes] = useState(loadTrackNotes);
-  const [trackOverrides, setTrackOverrides] = useState(loadTrackOverrides);
   // Marked in/out sections per track — { [trackId]: [{ id, startFraction,
   // endFraction }, ...] }. Stored as fractions of duration (0-1) rather
   // than absolute seconds so a section stays correct regardless of
   // whether the track's metadata happens to be loaded at read time.
   const [trackSections, setTrackSections] = useState(loadTrackSections);
-  const [healthFilter, setHealthFilter] = useState(null); // null | 'untagged' | 'unanalyzed' | 'missing' | 'duplicates'
+  const [healthFilter, setHealthFilter] = useState(null); // null | 'untagged' | 'missing' | 'duplicates'
   const [tagFilterId, setTagFilterId] = useState(null); // null | a tag id — "show only tracks with this tag"
 
-  // --- Bulk library preload (waveform + BPM/Key for everything) --------
+  // --- Bulk library preload (waveforms for everything) -------------------
   // Lives at the App level (not inside the Settings modal) so it keeps
   // running — and its progress keeps updating — even if Settings gets
   // closed while it's mid-run.
@@ -199,7 +200,6 @@ export default function App() {
     localStorage.setItem("disc.preloadConcurrency", String(preloadConcurrency));
   }, [preloadConcurrency]);
 
-  const [similarToTrackId, setSimilarToTrackId] = useState(null);
   const [collections, setCollections] = useState(loadCollections);
   const [shortcuts, setShortcuts] = useState(loadShortcuts);
   const shortcutsRef = useRef(shortcuts);
@@ -231,13 +231,12 @@ export default function App() {
   const allTracksRef = useRef([]);
   const playNextRef = useRef(() => {});
 
-  // Bumped whenever a track's BPM/Key analysis finishes (analysis itself
-  // lives in a plain module-level cache, not React state, so this is how
-  // components relying on that cache — like BPM/Key filtering — know to
-  // re-check it).
-  const [analysisTick, setAnalysisTick] = useState(0);
-  const handleAnalysisUpdated = useCallback(() => {
-    setAnalysisTick((v) => v + 1);
+  // Bumped as a bulk preload fills the waveform cache (which lives in a
+  // plain module-level cache, not React state) so anything sorted by a
+  // cached value — duration — knows to re-check it.
+  const [waveformTick, setWaveformTick] = useState(0);
+  const handleWaveformCacheUpdated = useCallback(() => {
+    setWaveformTick((v) => v + 1);
   }, []);
 
   const handleStartPreload = useCallback(() => {
@@ -255,19 +254,19 @@ export default function App() {
       shouldCancel: () => preloadCancelRef.current,
       onProgress: ({ completed, total }) => {
         setPreloadState((prev) => ({ ...prev, completed, total }));
-        // Bump analysisTick periodically (not on every single track) so
-        // BPM/Key-dependent UI — sort, filters, the health dashboard —
-        // refreshes as data streams in, without re-rendering on every
-        // single completion for a library that might be thousands deep.
+        // Bump the tick periodically (not on every single track) so a
+        // duration sort refreshes as data streams in, without
+        // re-rendering on every single completion for a library that
+        // might be thousands deep.
         ticksSinceRefresh += 1;
         if (ticksSinceRefresh >= 15) {
           ticksSinceRefresh = 0;
-          handleAnalysisUpdated();
+          handleWaveformCacheUpdated();
         }
       },
     })
       .then(({ cancelled }) => {
-        handleAnalysisUpdated();
+        handleWaveformCacheUpdated();
         setPreloadState((prev) => ({
           ...prev,
           status: cancelled ? "cancelled" : "done",
@@ -279,7 +278,7 @@ export default function App() {
       .finally(() => {
         setMaxConcurrentDecodes(DEFAULT_MAX_CONCURRENT_DECODES);
       });
-  }, [preloadState.status, preloadConcurrency, handleAnalysisUpdated]);
+  }, [preloadState.status, preloadConcurrency, handleWaveformCacheUpdated]);
 
   const handleCancelPreload = useCallback(() => {
     preloadCancelRef.current = true;
@@ -388,10 +387,6 @@ export default function App() {
   useEffect(() => {
     saveTrackNotes(trackNotes);
   }, [trackNotes]);
-
-  useEffect(() => {
-    saveTrackOverrides(trackOverrides);
-  }, [trackOverrides]);
 
   useEffect(() => {
     saveTrackSections(trackSections);
@@ -593,23 +588,6 @@ export default function App() {
     });
   }, []);
 
-  // field is "bpm" or "key"; value null/empty clears that field's override
-  // and falls back to the auto-detected value again.
-  const handleSetTrackOverride = useCallback((trackId, field, value) => {
-    setTrackOverrides((prev) => {
-      const current = prev[trackId] || {};
-      const next = { ...current, [field]: value || null };
-      if (next.bpm == null) delete next.bpm;
-      if (!next.key) delete next.key;
-      const result = { ...prev };
-      if (Object.keys(next).length === 0) {
-        delete result[trackId];
-      } else {
-        result[trackId] = next;
-      }
-      return result;
-    });
-  }, []);
 
   // Adds a new marked section for a track — startFraction/endFraction are
   // both 0-1, position within the track's total duration. Sections stay
@@ -909,7 +887,7 @@ export default function App() {
   // Renaming a track renames the actual file on disk — and since a
   // track's id *is* its file path everywhere in Disc, that means the id
   // changes too. Everything keyed by the old id (favorites, tags, notes,
-  // manual BPM/Key overrides, Collection membership) has to be carried
+  // Collection membership) has to be carried
   // over to the new id here, or it would just silently vanish the moment
   // the library rescans and the track reappears under its new path.
   const handleRenameTrackFile = useCallback(
@@ -933,14 +911,6 @@ export default function App() {
         });
 
         setTrackNotes((prev) => {
-          if (!(oldId in prev)) return prev;
-          const next = { ...prev };
-          next[newId] = next[oldId];
-          delete next[oldId];
-          return next;
-        });
-
-        setTrackOverrides((prev) => {
           if (!(oldId in prev)) return prev;
           const next = { ...prev };
           next[newId] = next[oldId];
@@ -1224,7 +1194,7 @@ export default function App() {
 
   // Global keyboard shortcuts — ignored entirely while typing in a text
   // field, dropdown, or slider so they don't fight with normal typing or
-  // native input behavior (e.g. arrow keys on the BPM range slider).
+  // native input behavior (e.g. arrow keys on a range slider).
   // Bindings come from `shortcuts` (user-customizable in the Shortcuts
   // modal) except Ctrl/Cmd+K, which is a fixed convention like most apps.
   useEffect(() => {
@@ -1582,6 +1552,34 @@ export default function App() {
   // (see FolderGroupPanel.jsx). "primary" is the original always-present
   // group (Favorites lives there) and
   // can't be deleted; anything else is fully user-created.
+  // Manual "Scan" from a folder's right-click menu: re-reads its linked
+  // directory from scratch and reports what changed, for the case where
+  // the file watcher missed something (files copied in while Disc was
+  // closed, a network drive that doesn't emit change events, etc.).
+  // Returns { status: "ok" | "missing" | "unlinked", added, removed }.
+  const handleScanFolder = useCallback(
+    async (folderId) => {
+      const folder = customFolders.find((f) => f.id === folderId);
+      if (!folder?.folderPath || !window.disc) return { status: "unlinked", added: 0, removed: 0 };
+      const found = await window.disc.scanFolder(folder.folderPath);
+      if (found === null) {
+        applyScanResult(folderId, null, () => {});
+        return { status: "missing", added: 0, removed: 0 };
+      }
+      const before = new Set((customFolderTracksRef.current[folderId] || []).map((t) => t.filePath));
+      const after = new Set(found.map((t) => t.filePath));
+      let added = 0;
+      for (const path of after) if (!before.has(path)) added += 1;
+      let removed = 0;
+      for (const path of before) if (!after.has(path)) removed += 1;
+      applyScanResult(folderId, found, (result) =>
+        setCustomFolderTracks((prev) => ({ ...prev, [folderId]: result }))
+      );
+      return { status: "ok", added, removed };
+    },
+    [customFolders, applyScanResult]
+  );
+
   const handleCreateFolderGroup = useCallback((name) => {
     const id = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const group = { id, name: name?.trim() || "New Group", deletable: true };
@@ -1697,6 +1695,7 @@ export default function App() {
     details: DetailsPanel,
     collections: CollectionsPanel,
     pomodoro: PomodoroPanel,
+    image: ImagePanel,
   };
 
   const discContextValue = useMemo(
@@ -1715,8 +1714,6 @@ export default function App() {
       onRenameTrackFile: handleRenameTrackFile,
       trackNotes,
       onSetTrackNote: handleSetTrackNote,
-      trackOverrides,
-      onSetTrackOverride: handleSetTrackOverride,
       trackSections,
       onAddTrackSection: handleAddTrackSection,
       onDeleteTrackSection: handleDeleteTrackSection,
@@ -1730,8 +1727,6 @@ export default function App() {
       onResetPreload: handleResetPreload,
       preloadConcurrency,
       onSetPreloadConcurrency: setPreloadConcurrency,
-      similarToTrackId,
-      onFindSimilar: setSimilarToTrackId,
       collections,
       onCreateCollection: handleCreateCollection,
       onRenameCollection: handleRenameCollection,
@@ -1778,6 +1773,7 @@ export default function App() {
       onSortSectionAlphabetically: handleSortSectionAlphabetically,
       folderGroups,
       onCreateFolderGroup: handleCreateFolderGroup,
+      onScanFolder: handleScanFolder,
       onRenameFolderGroup: handleRenameFolderGroup,
       onDeleteFolderGroup: handleDeleteFolderGroup,
       pendingDeletedGroup,
@@ -1801,8 +1797,7 @@ export default function App() {
       onPlayNext: handlePlayNext,
       onPlayPrev: handlePlayPrev,
       onToggleShuffle: handleToggleShuffle,
-      analysisTick,
-      onAnalysisUpdated: handleAnalysisUpdated,
+      waveformTick,
       volume,
       onVolumeChange: setVolume,
     }),
@@ -1821,8 +1816,6 @@ export default function App() {
       handleRenameTrackFile,
       trackNotes,
       handleSetTrackNote,
-      trackOverrides,
-      handleSetTrackOverride,
       trackSections,
       handleAddTrackSection,
       handleDeleteTrackSection,
@@ -1836,7 +1829,6 @@ export default function App() {
       handleResetPreload,
       preloadConcurrency,
       setPreloadConcurrency,
-      similarToTrackId,
       collections,
       handleCreateCollection,
       handleRenameCollection,
@@ -1880,6 +1872,7 @@ export default function App() {
       handleSortSectionAlphabetically,
       folderGroups,
       handleCreateFolderGroup,
+      handleScanFolder,
       handleRenameFolderGroup,
       handleDeleteFolderGroup,
       pendingDeletedGroup,
@@ -1903,8 +1896,7 @@ export default function App() {
       handlePlayNext,
       handlePlayPrev,
       handleToggleShuffle,
-      analysisTick,
-      handleAnalysisUpdated,
+      waveformTick,
       volume,
       setVolume,
     ]
@@ -1969,62 +1961,124 @@ export default function App() {
         name: "Sounds",
       };
 
-      api.addPanel({
-        id: "sidebar",
-        component: "folderGroup",
-        title: primaryGroup.name,
-        params: { groupId: "primary" },
-      });
+      // Four columns: Folders | Collections over Sound Effects | Library |
+      // Details over Pomodoro. Fresh installs only have the primary group,
+      // so a second, empty "Sound Effects" group is created for the
+      // second column; anyone who already has extra groups (but no saved
+      // layout) gets those in that slot instead.
+      const isFreshInstall = Object.keys(existingPresets).length === 0;
+      let extraGroups = folderGroups.filter((g) => g.id !== "primary");
+      if (isFreshInstall && extraGroups.length === 0) {
+        const soundEffects = { id: "sound-effects", name: "Sound Effects", deletable: true };
+        setFolderGroups((prev) =>
+          prev.some((g) => g.id === soundEffects.id) ? prev : [...prev, soundEffects]
+        );
+        extraGroups = [soundEffects];
+      }
 
-      api.addPanel({
-        id: "collections",
-        component: "collections",
-        title: "Collections",
-        position: { referencePanel: "sidebar", direction: "below" },
+      // Built as explicit serialized JSON rather than by calling addPanel
+      // and then resizing: sizing after the fact (setSize, initialWidth)
+      // turned out to be unreliable — dockview rescales the grid during
+      // its first layout pass, which left the Details column squeezed to
+      // its minimum width and the columns otherwise equal. Handing it
+      // finished sizes up front has no ordering/timing to get wrong.
+      // The Library takes whatever width is left over.
+      const gridWidth = api.width || 1600;
+      const gridHeight = api.height || 900;
+      const SIDE_W = 230;
+      const DETAILS_W = 340;
+      const COLLECTIONS_H = 190;
+      const POMODORO_H = 325;
+      const sfIds = extraGroups.map((g) => `folder-group-${g.id}`);
+      const panels = {
+        sidebar: {
+          id: "sidebar",
+          contentComponent: "folderGroup",
+          params: { groupId: "primary" },
+          title: "Folders",
+        },
+        collections: { id: "collections", contentComponent: "collections", title: "Collections" },
+        library: { id: "library", contentComponent: "library", title: "Library" },
+        details: { id: "details", contentComponent: "details", title: "Details" },
+        pomodoro: { id: "pomodoro", contentComponent: "pomodoro", title: "Pomodoro Timer" },
+      };
+      extraGroups.forEach((g) => {
+        panels[`folder-group-${g.id}`] = {
+          id: `folder-group-${g.id}`,
+          contentComponent: "folderGroup",
+          params: { groupId: g.id },
+          title: g.name,
+        };
       });
-
-      api.addPanel({
-        id: "library",
-        component: "library",
-        title: "Library",
-        position: { referencePanel: "sidebar", direction: "right" },
+      const leaf = (id, views, size) => ({
+        type: "leaf",
+        data: { views, activeView: views[0], id },
+        size,
       });
-
-      api.addPanel({
-        id: "details",
-        component: "details",
-        title: "Details",
-        position: { referencePanel: "library", direction: "right" },
-      });
-
-      // Any other folder groups that already existed (created in an
-      // earlier session, before a default layout was ever saved) each get
-      // their own panel too, stacked next to the primary one to start —
-      // fully draggable/dockable anywhere from here on, same as
-      // everything else.
-      folderGroups
-        .filter((g) => g.id !== "primary")
-        .forEach((group) => {
-          api.addPanel({
-            id: `folder-group-${group.id}`,
-            component: "folderGroup",
-            title: group.name,
-            params: { groupId: group.id },
-            position: { referencePanel: "sidebar", direction: "within" },
-          });
+      const middleColumn =
+        sfIds.length > 0
+          ? {
+              type: "branch",
+              data: [
+                leaf("5", ["collections"], COLLECTIONS_H),
+                leaf("6", sfIds, gridHeight - COLLECTIONS_H),
+              ],
+              size: SIDE_W,
+            }
+          : leaf("5", ["collections"], SIDE_W);
+      const defaultLayout = {
+        grid: {
+          root: {
+            type: "branch",
+            data: [
+              leaf("2", ["sidebar"], SIDE_W),
+              middleColumn,
+              leaf("1", ["library"], gridWidth - SIDE_W * 2 - DETAILS_W),
+              {
+                type: "branch",
+                data: [
+                  leaf("3", ["details"], gridHeight - POMODORO_H),
+                  leaf("4", ["pomodoro"], POMODORO_H),
+                ],
+                size: DETAILS_W,
+              },
+            ],
+            size: gridHeight,
+          },
+          width: gridWidth,
+          height: gridHeight,
+          orientation: "HORIZONTAL",
+        },
+        panels,
+        activeGroup: "1",
+      };
+      try {
+        api.fromJSON(defaultLayout);
+      } catch (layoutErr) {
+        // Should never happen, but a blank window with no way to recover
+        // is far worse than an unstyled layout — fall back to plain
+        // addPanel calls for the three essential panels.
+        console.error("Default layout JSON failed, using minimal fallback:", layoutErr);
+        [...api.panels].forEach((p) => p.api.close());
+        api.addPanel({
+          id: "sidebar",
+          component: "folderGroup",
+          title: "Folders",
+          params: { groupId: "primary" },
         });
-
-      // Give the library the lion's share of the width on first launch,
-      // and split the left column so Folders keeps most of the vertical
-      // space with Collections underneath — both independently
-      // draggable/resizable/dockable from here on, this is just the
-      // starting layout.
-      const sidebarPanel = api.getPanel("sidebar");
-      const collectionsPanel = api.getPanel("collections");
-      const detailsPanel = api.getPanel("details");
-      sidebarPanel?.api.setSize({ width: 220 });
-      collectionsPanel?.api.setSize({ height: 220 });
-      detailsPanel?.api.setSize({ width: 300 });
+        api.addPanel({
+          id: "library",
+          component: "library",
+          title: "Library",
+          position: { referencePanel: "sidebar", direction: "right" },
+        });
+        api.addPanel({
+          id: "details",
+          component: "details",
+          title: "Details",
+          position: { referencePanel: "library", direction: "right" },
+        });
+      }
 
       // First-ever launch (or recovering from a saved layout that no
       // longer restores cleanly): capture this as the "Default" layout
@@ -2136,8 +2190,75 @@ export default function App() {
           params: { groupId: g.id },
         })),
       { id: "pomodoro", title: "Pomodoro Timer", component: "pomodoro" },
+      { id: "image", title: "Image", component: "image" },
     ];
   }, [folderGroups]);
+
+  // Where a panel goes when it's brought back from the Panels menu, based
+  // on the default layout (Folders | Collections over Sound Effects |
+  // Library | Details over Pomodoro) rather than dockview's own fallback of
+  // stacking it wherever the active group happens to be — which, for a
+  // panel that used to live on the far right, meant piling it up on top of
+  // whatever was active on the left. Each rule anchors to the panels that
+  // are actually open right now and degrades gracefully when they're not:
+  // no direction-with-no-reference means "full-height column at the very
+  // edge of the window", which is the right spot for the side columns.
+  function defaultPanelPlacement(api, panelId) {
+    const open = (id) => (api.getPanel(id) ? id : null);
+    const groupIds = api.panels
+      .map((p) => p.id)
+      .filter((id) => id.startsWith("folder-group-"));
+    const first = (...ids) => ids.find(Boolean) || null;
+    const anyOpen = api.panels.length > 0;
+    if (!anyOpen) return {}; // nothing to anchor to — let dockview place it
+
+    const pos = (referencePanel, direction) =>
+      referencePanel ? { position: { referencePanel, direction } } : null;
+    const edge = (direction) => ({ position: { direction } });
+
+    switch (panelId) {
+      case "sidebar": // Folders: far left column
+        return { ...edge("left"), initialWidth: 230 };
+      case "collections": {
+        // Above the Sound Effects-style group if there is one, else right
+        // of Folders, else left of the Library.
+        const anchor = pos(first(groupIds[0]), "above");
+        if (anchor) return anchor;
+        const beside = pos(open("sidebar"), "right") || pos(open("library"), "left");
+        return { ...(beside || edge("left")), initialWidth: 230 };
+      }
+      case "library": {
+        const leftCol = first(open("collections"), groupIds[0], open("sidebar"));
+        const placed = pos(leftCol, "right") || pos(first(open("details"), open("image"), open("pomodoro")), "left");
+        return placed || {};
+      }
+      case "details": {
+        // Details heads the right-hand column, so if Image/Pomodoro are
+        // already there it goes above them rather than opening a second
+        // column beside the Library.
+        const placed = pos(first(open("image"), open("pomodoro")), "above") || pos(open("library"), "right");
+        return { ...(placed || edge("right")), initialWidth: 340 };
+      }
+      case "pomodoro": {
+        const placed = pos(first(open("image"), open("details")), "below") || pos(open("library"), "right");
+        return { ...(placed || edge("right")), initialHeight: 325, initialWidth: 340 };
+      }
+      case "image": {
+        const placed = pos(open("details"), "below") || pos(open("pomodoro"), "above") || pos(open("library"), "right");
+        return { ...(placed || edge("right")), initialHeight: 240, initialWidth: 340 };
+      }
+      default: {
+        // A folder group (Sound Effects, etc.): under Collections, else
+        // beside Folders, else left of the Library.
+        const placed =
+          pos(open("collections"), "below") ||
+          pos(groupIds.find((id) => id !== panelId), "within") ||
+          pos(open("sidebar"), "right") ||
+          pos(open("library"), "left");
+        return { ...(placed || edge("left")), initialWidth: 230 };
+      }
+    }
+  }
 
   const handleTogglePanel = useCallback(
     (panelId) => {
@@ -2150,12 +2271,51 @@ export default function App() {
       }
       const known = knownPanels.find((p) => p.id === panelId);
       if (!known) return;
+      let placement = {};
+      try {
+        placement = defaultPanelPlacement(api, known.id);
+      } catch (err) {
+        console.error("Couldn't work out where to put the panel, using dockview's default:", err);
+      }
       api.addPanel({
         id: known.id,
         component: known.component,
         title: known.title,
         params: known.params,
+        ...placement,
       });
+      // Adding a column makes dockview redistribute the whole row's widths
+      // (the Library can end up as narrow as the sidebars), so put the side
+      // columns back at their normal widths — the Library takes the rest.
+      // Left to right, side columns only: shrinking a left column hands its
+      // spare width to the columns after it, and the right-hand column
+      // being set last is what hands the remainder back to the Library.
+      // (A timer rather than requestAnimationFrame — rAF doesn't fire while
+      // the window is hidden or occluded, which would skip this entirely.)
+      setTimeout(() => {
+        try {
+          const widths = { sidebar: 230, collections: 230, details: 340, pomodoro: 340, image: 340 };
+          const left = (p) => p.group?.element?.getBoundingClientRect().left ?? 0;
+          [...api.panels]
+            .sort((a, b) => left(a) - left(b))
+            .forEach((p) => {
+              const w = p.id.startsWith("folder-group-") ? 230 : widths[p.id];
+              if (w) p.api.setSize({ width: w });
+            });
+          // Same idea for heights, bottom to top (each one takes its space from
+          // the panel above it, so the lower ones must be set first), so Pomodoro isn't left
+          // squeezed and Collections isn't stretched to half a column.
+          const heights = { collections: 190, image: 240, pomodoro: 325 };
+          const top = (p) => p.group?.element?.getBoundingClientRect().top ?? 0;
+          [...api.panels]
+            .sort((a, b) => top(b) - top(a))
+            .forEach((p) => {
+              if (heights[p.id]) p.api.setSize({ height: heights[p.id] });
+            });
+        } catch (err) {
+          console.error("Couldn't re-apply panel widths:", err);
+        }
+      }, 60);
     },
     [knownPanels]
   );
@@ -2236,6 +2396,8 @@ export default function App() {
           knownPanels={knownPanels}
           openPanelIds={openPanelIds}
           onTogglePanel={handleTogglePanel}
+          appearanceSettings={appearanceSettings}
+          onSetAppearance={handleSetAppearance}
         />
       )}
       <div className="app__dock">

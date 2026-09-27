@@ -150,3 +150,16 @@
   padding: 6px 0 0;
   margin: 0;
 }
+
+.profiles-menu__badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}

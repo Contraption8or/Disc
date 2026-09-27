@@ -3,8 +3,8 @@
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
   --radius-lg: 16px;
   --radius-full: 999px;
 
@@ -16,6 +16,12 @@
 
   --danger: #ef5b5b;
   --favorite: #ff6fa5;
+
+  /* Elevation + interaction tokens, shared so every popover, menu and
+     focus state looks like it belongs to the same app. */
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Always a bit darker than bg-app, regardless of theme — this is what
      makes the title bar read as "the darkest surface" in any theme,

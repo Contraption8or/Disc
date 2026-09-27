@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
-import { getEffectiveAnalysis } from "../audio/effectiveAnalysis.js";
 import { findDuplicateIds } from "../audio/duplicates.js";
 import { isTrackMissing } from "../utils/missingTracks.js";
 import { formatSize } from "../utils/format.js";
@@ -10,7 +9,6 @@ export default function LibraryHealthModal({ onClose }) {
   const {
     allTracks,
     trackTags,
-    trackOverrides,
     missingFolderIds,
     musicFolderPath,
     customFolders,
@@ -53,20 +51,17 @@ export default function LibraryHealthModal({ onClose }) {
 
   const stats = useMemo(() => {
     let untagged = 0;
-    let unanalyzed = 0;
     let missing = 0;
     let totalSize = 0;
 
     allTracks.forEach((t) => {
       totalSize += t.sizeBytes || 0;
       if (!(trackTags[t.id] || []).length) untagged += 1;
-      const effective = getEffectiveAnalysis(t.id, trackOverrides);
-      if (effective.bpm == null && effective.key == null) unanalyzed += 1;
       if (isTrackMissing(t, missingFolderIds, musicFolderPath, customFolders)) missing += 1;
     });
 
-    return { untagged, unanalyzed, missing, totalSize };
-  }, [allTracks, trackTags, trackOverrides, missingFolderIds, musicFolderPath, customFolders]);
+    return { untagged, missing, totalSize };
+  }, [allTracks, trackTags, missingFolderIds, musicFolderPath, customFolders]);
 
   function view(type) {
     onSetHealthFilter(type);
@@ -92,23 +87,6 @@ export default function LibraryHealthModal({ onClose }) {
               className="health-modal__view"
               disabled={stats.untagged === 0}
               onClick={() => view("untagged")}
-            >
-              View
-            </button>
-          </div>
-
-          <div className="health-modal__row">
-            <div className="health-modal__row-text">
-              <div className="health-modal__row-title">Not yet analyzed</div>
-              <div className="health-modal__row-desc">
-                No BPM/Key detected or set (open a track in Details to analyze it)
-              </div>
-            </div>
-            <div className="health-modal__row-count">{stats.unanalyzed}</div>
-            <button
-              className="health-modal__view"
-              disabled={stats.unanalyzed === 0}
-              onClick={() => view("unanalyzed")}
             >
               View
             </button>

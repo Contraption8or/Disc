@@ -1,4 +1,3 @@
-const RADIUS_VARS = ["--radius-sm", "--radius-md", "--radius-lg", "--radius-full"];
 const BG_VARS = [
   { render: "--bg-app", base: "--bg-app-base" },
   { render: "--bg-panel", base: "--bg-panel-base" },
@@ -8,26 +7,9 @@ const BG_VARS = [
 export function applyAppearanceSettings(settings) {
   const root = document.documentElement;
 
-  // Clean mode: zero out the shared corner-radius variables that every
-  // component's CSS already reads from — no per-component changes needed.
-  if (settings.cleanMode) {
-    RADIUS_VARS.forEach((v) => root.style.setProperty(v, "0px"));
-  } else {
-    RADIUS_VARS.forEach((v) => root.style.removeProperty(v));
-  }
-
   // Reduce motion: a single blanket rule in appearance.css reads this
   // attribute and disables transitions/animations app-wide.
   root.setAttribute("data-reduce-motion", settings.reduceMotion ? "on" : "off");
-
-  // Liquid Glass buttons: a curated set of chrome-level buttons (title
-  // bar, toolbar, dialogs — see the selector list in appearance.css)
-  // gets a frosted/translucent treatment. Deliberately NOT a blanket
-  // `button` rule: the same treatment applied to every per-row button in
-  // a long track list would mean dozens of live backdrop-filter layers
-  // on screen at once, which is a real scroll-performance cost, not just
-  // visual noise.
-  root.setAttribute("data-glass", settings.glassButtons ? "on" : "off");
 
   // Spill: a curated set of accent-colored elements and color dots/
   // swatches (see appearance.css) read this intensity variable for their

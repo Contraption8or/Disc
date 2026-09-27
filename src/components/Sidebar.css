@@ -56,6 +56,20 @@
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
   padding: 0 2px;
+  gap: 8px;
+}
+
+/* A long group name truncates instead of wrapping onto a second line and
+   pushing the action buttons around. */
+.sidebar__heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__heading > div {
+  flex-shrink: 0;
 }
 
 .sidebar__add {

@@ -9,11 +9,12 @@ import "./FolderContextMenu.css";
 // itself sits near the bottom of the screen) renders the menu partly
 // off-screen instead of flipping to fit.
 const MENU_WIDTH = 220;
-const MENU_HEIGHT = 175;
+const MENU_HEIGHT = 210;
 
 export default function FolderContextMenu({ x, y, folder, onUnlink, onRename, onDelete, onClose }) {
-  const { customFolderTracks } = useDisc();
+  const { customFolderTracks, onScanFolder } = useDisc();
   const [exportStatus, setExportStatus] = useState(null); // null | "exporting" | "success" | "error"
+  const [scanResult, setScanResult] = useState(null); // null | "scanning" | { status, added, removed }
   const rootRef = useRef(null);
 
   const isDivider = folder.type === "divider";
@@ -37,6 +38,29 @@ export default function FolderContextMenu({ x, y, folder, onUnlink, onRename, on
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose, exportStatus]);
+
+  async function handleScan() {
+    if (scanResult === "scanning") return;
+    setScanResult("scanning");
+    try {
+      setScanResult(await onScanFolder(folder.id));
+    } catch {
+      setScanResult({ status: "error", added: 0, removed: 0 });
+    }
+  }
+
+  function scanLabel() {
+    if (scanResult === "scanning") return "Scanning…";
+    if (!scanResult) return "Scan for new files";
+    if (scanResult.status === "missing") return "Folder unreachable — is the drive connected?";
+    if (scanResult.status === "error") return "Scan failed — try again";
+    const { added, removed } = scanResult;
+    if (added === 0 && removed === 0) return "Up to date — nothing new found";
+    const parts = [];
+    if (added > 0) parts.push(`${added} new file${added === 1 ? "" : "s"} found`);
+    if (removed > 0) parts.push(`${removed} removed`);
+    return parts.join(", ");
+  }
 
   async function handleExport() {
     if (exportStatus === "exporting" || !window.disc) return;
@@ -80,6 +104,16 @@ export default function FolderContextMenu({ x, y, folder, onUnlink, onRename, on
           }}
         >
           Unlink Directory
+        </button>
+      )}
+      {isLinked && !isDivider && (
+        <button
+          className="folder-context-menu__option"
+          disabled={scanResult === "scanning"}
+          title="Re-read this folder's directory and pick up anything the live watcher may have missed"
+          onClick={handleScan}
+        >
+          {scanLabel()}
         </button>
       )}
       {!isDivider && (

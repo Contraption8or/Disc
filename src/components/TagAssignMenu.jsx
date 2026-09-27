@@ -28,6 +28,7 @@ export default function TagAssignMenu({ availableTags, onAssign, onCreateAndAssi
     return (
       <TagCreateMenu
         onCreate={(name, color) => onCreateAndAssign(name, color)}
+        onUseExisting={(tag) => onAssign(tag.id)}
         onClose={onClose}
       />
     );

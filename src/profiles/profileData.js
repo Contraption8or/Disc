@@ -11,6 +11,7 @@ export const PROFILE_KEYS = [
   "disc.defaultLayoutName",
   "disc.favorites",
   "disc.folderGroups",
+  "disc.imagePanel",
   "disc.layoutPresets",
   "disc.musicFolder",
   "disc.pomodoroSettings",
@@ -21,7 +22,6 @@ export const PROFILE_KEYS = [
   "disc.theme",
   "disc.trackNotes",
   "disc.trackOrder",
-  "disc.trackOverrides",
   "disc.trackSections",
   "disc.trackTags",
   "disc.volume",
@@ -52,3 +52,18 @@ export function applyProfileData(data) {
     }
   }
 }
+
+// The built-in "Default" profile: rather than a saved file, it's just "every
+// profile-relevant key removed" — on the next load Disc treats itself as a
+// fresh install (default theme, default panel layout, default settings, an
+// empty library setup), exactly what a brand-new copy would show.
+export function resetProfileData() {
+  for (const key of PROFILE_KEYS) {
+    localStorage.removeItem(key);
+  }
+}
+
+// Whether the Default profile row is hidden from the Profiles menu. A plain
+// UI preference — deliberately NOT in PROFILE_KEYS, so switching profiles
+// (or resetting to Default) never flips it back.
+export const HIDE_DEFAULT_PROFILE_KEY = "disc.hideDefaultProfile";

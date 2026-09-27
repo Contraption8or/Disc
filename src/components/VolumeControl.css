@@ -22,3 +22,43 @@
   width: 80px;
   accent-color: var(--accent);
 }
+
+.volume-control {
+  position: relative;
+}
+
+.volume-control__editor {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+}
+
+.volume-control__editor-input {
+  width: 44px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 4px 6px;
+  text-align: right;
+}
+
+.volume-control__editor-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.volume-control__editor-unit {
+  color: var(--text-secondary);
+  font-size: 13px;
+}

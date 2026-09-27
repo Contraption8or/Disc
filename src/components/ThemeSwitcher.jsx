@@ -5,8 +5,18 @@ import ThemeCreatorModal from "./ThemeCreatorModal.jsx";
 import ThemeContextMenu from "./ThemeContextMenu.jsx";
 import "./ThemeSwitcher.css";
 
-export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
+export default function ThemeSwitcher({
+  theme,
+  onChange,
+  onPreviewCancel,
+  appearanceSettings,
+  onSetAppearance,
+}) {
   const [open, setOpen] = useState(false);
+  // "themes" | "effects" — the Effects tab holds Spill and Gradient
+  // backgrounds, which used to live in Settings but are really part of a
+  // theme's look, so they sit alongside the theme list instead.
+  const [tab, setTab] = useState("themes");
   const [modalTarget, setModalTarget] = useState(null); // null | "new" | customTheme
   const [themeContextMenu, setThemeContextMenu] = useState(null); // { x, y, theme } | null
   const [customThemes, setCustomThemes] = useState(loadCustomThemes);
@@ -140,7 +150,115 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
 
       {open && (
         <div className="theme-switcher__menu">
-          {THEMES.map((t) => (
+          <div className="theme-switcher__tabs">
+            <button
+              className={
+                "theme-switcher__tab" + (tab === "themes" ? " theme-switcher__tab--active" : "")
+              }
+              onClick={() => setTab("themes")}
+            >
+              Themes
+            </button>
+            <button
+              className={
+                "theme-switcher__tab" + (tab === "effects" ? " theme-switcher__tab--active" : "")
+              }
+              onClick={() => setTab("effects")}
+            >
+              Effects
+            </button>
+          </div>
+
+          {tab === "effects" && appearanceSettings && (
+            <div className="theme-switcher__effects">
+              <label className="theme-switcher__effect-row">
+                <span>Spill</span>
+                <input
+                  type="checkbox"
+                  checked={appearanceSettings.spillEnabled}
+                  onChange={(e) => onSetAppearance({ spillEnabled: e.target.checked })}
+                />
+              </label>
+              {appearanceSettings.spillEnabled && (
+                <div className="theme-switcher__effect-slider">
+                  <span>Intensity</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={appearanceSettings.spillIntensity}
+                    onChange={(e) => onSetAppearance({ spillIntensity: Number(e.target.value) })}
+                  />
+                </div>
+              )}
+
+              <div className="theme-switcher__divider" />
+
+              <label className="theme-switcher__effect-row">
+                <span>Gradient backgrounds</span>
+                <input
+                  type="checkbox"
+                  checked={appearanceSettings.gradientEnabled}
+                  onChange={(e) => onSetAppearance({ gradientEnabled: e.target.checked })}
+                />
+              </label>
+              {appearanceSettings.gradientEnabled && (
+                <>
+                  <div className="theme-switcher__effect-slider">
+                    <span>Intensity</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={appearanceSettings.gradientIntensity}
+                      onChange={(e) =>
+                        onSetAppearance({ gradientIntensity: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div className="theme-switcher__effect-radios">
+                    <label>
+                      <input
+                        type="radio"
+                        name="gradient-mode"
+                        checked={appearanceSettings.gradientMode === "auto"}
+                        onChange={() => onSetAppearance({ gradientMode: "auto" })}
+                      />
+                      Auto angle
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="gradient-mode"
+                        checked={appearanceSettings.gradientMode === "manual"}
+                        onChange={() => onSetAppearance({ gradientMode: "manual" })}
+                      />
+                      Manual angle
+                    </label>
+                  </div>
+                  {appearanceSettings.gradientMode === "manual" && (
+                    <div className="theme-switcher__effect-slider">
+                      <span>Angle</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="5"
+                        value={appearanceSettings.gradientAngle}
+                        onChange={(e) =>
+                          onSetAppearance({ gradientAngle: Number(e.target.value) })
+                        }
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "themes" && THEMES.map((t) => (
             <button
               key={t.id}
               className={
@@ -160,9 +278,11 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
             </button>
           ))}
 
-          {customThemes.length > 0 && <div className="theme-switcher__divider" />}
+          {tab === "themes" && customThemes.length > 0 && (
+            <div className="theme-switcher__divider" />
+          )}
 
-          {customThemes.map((t) => (
+          {tab === "themes" && customThemes.map((t) => (
             <div
               key={t.id}
               className="theme-switcher__row"
@@ -195,16 +315,20 @@ export default function ThemeSwitcher({ theme, onChange, onPreviewCancel }) {
             </div>
           ))}
 
-          <div className="theme-switcher__divider" />
-          <button
-            className="theme-switcher__option theme-switcher__option--accent"
-            onClick={() => {
-              setModalTarget("new");
-              setOpen(false);
-            }}
-          >
-            + Create custom theme
-          </button>
+          {tab === "themes" && (
+            <>
+              <div className="theme-switcher__divider" />
+              <button
+                className="theme-switcher__option theme-switcher__option--accent"
+                onClick={() => {
+                  setModalTarget("new");
+                  setOpen(false);
+                }}
+              >
+                + Create custom theme
+              </button>
+            </>
+          )}
         </div>
       )}
 

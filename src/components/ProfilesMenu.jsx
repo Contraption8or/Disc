@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { collectProfileData, applyProfileData } from "../profiles/profileData.js";
+import {
+  collectProfileData,
+  applyProfileData,
+  resetProfileData,
+  HIDE_DEFAULT_PROFILE_KEY,
+} from "../profiles/profileData.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import Icon from "./Icon.jsx";
 import "./ProfilesMenu.css";
@@ -13,6 +18,15 @@ export default function ProfilesMenu() {
   const [switchTarget, setSwitchTarget] = useState(null); // { fileName, profileName } | null
   const [deleteTarget, setDeleteTarget] = useState(null); // { fileName, profileName } | null
   const [status, setStatus] = useState(""); // brief inline feedback, e.g. "Exported"
+  // The built-in Default profile (see resetProfileData) is always there, but
+  // its row can be tucked away for anyone who'd rather not see it.
+  const [hideDefault, setHideDefault] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_DEFAULT_PROFILE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const rootRef = useRef(null);
   const createInputRef = useRef(null);
   const renameInputRef = useRef(null);
@@ -65,8 +79,24 @@ export default function ProfilesMenu() {
     setDraftName("");
   }
 
+  function toggleHideDefault() {
+    const next = !hideDefault;
+    setHideDefault(next);
+    try {
+      localStorage.setItem(HIDE_DEFAULT_PROFILE_KEY, String(next));
+    } catch {
+      // Preference just won't persist — not worth failing over.
+    }
+  }
+
   async function confirmSwitch() {
-    if (!switchTarget || !window.disc) return;
+    if (!switchTarget) return;
+    if (switchTarget.isDefault) {
+      resetProfileData();
+      window.location.reload();
+      return;
+    }
+    if (!window.disc) return;
     const result = await window.disc.loadProfile(switchTarget.fileName);
     if (result?.success) {
       applyProfileData(result.data);
@@ -156,11 +186,31 @@ export default function ProfilesMenu() {
             first if you want to keep them.
           </p>
 
-          {profiles.length === 0 && !creating && (
+          {profiles.length === 0 && !creating && hideDefault && (
             <div className="profiles-menu__empty">No saved profiles yet.</div>
           )}
 
           <div className="profiles-menu__list">
+            {!hideDefault && (
+              <div className="profiles-menu__row">
+                <button
+                  className="profiles-menu__option"
+                  onClick={() => setSwitchTarget({ isDefault: true, profileName: "Default" })}
+                  title="Reset Disc to its factory defaults"
+                >
+                  Default
+                  <span className="profiles-menu__badge">Built-in</span>
+                </button>
+                <button
+                  className="profiles-menu__icon-btn"
+                  title="Hide the Default profile"
+                  onClick={toggleHideDefault}
+                >
+                  <Icon name="eyeOff" size={13} />
+                </button>
+              </div>
+            )}
+
             {profiles.map((p) => (
               <div key={p.fileName} className="profiles-menu__row">
                 {editingFileName === p.fileName ? (
@@ -260,6 +310,16 @@ export default function ProfilesMenu() {
             Import…
           </button>
 
+          {hideDefault && (
+            <button
+              className="profiles-menu__option profiles-menu__option--action"
+              onClick={toggleHideDefault}
+            >
+              <Icon name="eye" size={12} style={{ marginRight: 6 }} />
+              Show Default Profile
+            </button>
+          )}
+
           {status && <p className="profiles-menu__status">{status}</p>}
         </div>
       )}
@@ -267,7 +327,11 @@ export default function ProfilesMenu() {
       {switchTarget && (
         <ConfirmModal
           title="Switch profile"
-          message={`Switch to "${switchTarget.profileName}"? Your current settings and folders will be replaced with what's saved in that profile. Disc will reload right after.`}
+          message={
+            switchTarget.isDefault
+              ? "Reset Disc to its factory defaults? Your current theme, layout, settings, folders, and tags will be cleared — save them as a profile first if you want to keep them. Disc will reload right after."
+              : `Switch to "${switchTarget.profileName}"? Your current settings and folders will be replaced with what's saved in that profile. Disc will reload right after.`
+          }
           confirmLabel="Switch"
           danger={false}
           onConfirm={confirmSwitch}

@@ -1,7 +1,7 @@
 # Disc
 
 A local mp3 library manager built for video editing — sort your music into
-folders, tag and search it, see real waveforms, get auto-detected BPM/Key,
+folders, tag and search it, see real waveforms,
 shuffle-play a folder's worth of tracks, and drag a track straight onto
 Premiere Pro's timeline.
 
@@ -119,25 +119,17 @@ unassigns it here) or "Delete tag completely" — that one's armed on the
 first click and only actually deletes on a second click, so it's hard to
 do by accident.
 
-**Auto BPM & Key detection** — open a track in Details and Disc analyzes
-it: BPM via onset-autocorrelation over up to 90 seconds of audio, Key via
-a Goertzel-filterbank chroma vector sampled from three separate ~7-second
-windows spread across the song (around the 20/50/80% marks, not just one
-clip near the start) matched against Krumhansl-Schmuckler major/minor
-profiles. Both are real signal-processing techniques, not placeholders —
-but especially Key detection is a best-effort estimate, so treat it as a
-starting point rather than certain fact. Analysis only runs when you
-actually open a track (it's heavier than waveform decoding), not for
-every row that scrolls by.
+**Tag suggestions** — typing a new tag name shows "Did you mean…" chips for
+existing tags that look like what you meant (a typo, a transposed letter, a
+plural, or just the start of one). Tab accepts the first; from a menu that's
+also assigning the tag, picking a suggestion attaches the existing tag
+instead of making a near-duplicate. An exact match (ignoring case and
+punctuation) can't be created twice.
 
 **Search** — the search box now searches **everywhere** (every folder,
 not just the one selected) by filename and by assigned tag name, the
-moment you type something. Combine it with the BPM range slider and/or
-Key dropdown and a small popover shows what matched, e.g.
-*"12 results for "boss fight" · Key: Am · 120–140 BPM"*. Note: BPM/Key
-filtering can only match tracks that have already been analyzed (i.e.
-opened in Details at least once) — there's no bulk-analyze-everything
-pass, to keep the library fast.
+moment you type something. A small popover shows how many tracks matched,
+e.g. *"12 results for "boss fight""*.
 
 **Play All / Shuffle** — in the Library toolbar, plays every track
 currently shown (respecting whatever folder/search/filters are active) in
@@ -157,10 +149,9 @@ one `AudioContext` and caps at 3 concurrent decodes, `TrackRow` is
 memoized, and the shared app context is memoized so unrelated state
 changes don't cascade into re-rendering every row. The virtualizer skips
 re-rendering on scroll frames where the visible row range hasn't actually
-changed. The search box and BPM range sliders are decoupled from the
-expensive part — typing/dragging feels instant, but the actual
-"re-filter the whole library" work only runs ~120ms after you pause, not
-on every keystroke/pixel. The playback progress bars (per-row and Now
+changed. The search box is decoupled from the expensive part — typing
+feels instant, but the actual "re-filter the whole library" work only runs
+~120ms after you pause, not on every keystroke. The playback progress bars (per-row and Now
 Playing) now only run their per-frame update loop while actually
 playing — they used to keep animating at 60fps even while paused, which
 was pure wasted work. The volume slider's localStorage write is
@@ -185,8 +176,7 @@ deletable.
 
 **Profiles** — a new icon in the title bar (next to the Windows menu).
 Since Disc doesn't hold the actual audio files itself, a profile is
-everything *around* them: theme, folder structure, tags, notes, BPM/Key
-overrides, marked sections, layout, shortcuts, appearance settings, all
+everything *around* them: theme, folder structure, tags, notes, marked sections, layout, shortcuts, appearance settings, all
 of it, bundled into one file. Save your current setup as a named
 profile, switch between saved ones (with a confirmation first, since
 switching replaces whatever's currently active), rename or delete them
@@ -199,6 +189,13 @@ individual files rather than one combined blob, and renaming one only
 ever rewrites a name field inside its file — never the filename — which
 sidesteps every filesystem-rename edge case a name-as-filename scheme
 would otherwise run into.
+
+A built-in **Default** profile is always listed first (it isn't a file on
+disk): switching to it — after a confirmation — clears every profile-relevant
+setting, so Disc comes back up exactly like a fresh install (default theme,
+default panel layout, empty library setup). Save your own setup as a profile
+first if you want it back. Prefer not to see it? The eye icon on its row
+hides it, and "Show Default Profile" at the bottom of the menu brings it back.
 
 **Marked sections + playback modifiers** — Ctrl-click (Cmd on Mac) any
 Play button to cycle through a track's marked sections, playing from
@@ -319,7 +316,7 @@ folder" and "someone's moving a panel."
 **Rename a track** — right-click a track's waveform → Rename, renames the
 actual file on disk (extension preserved automatically, the input only
 ever edits the name — same as how it's displayed everywhere else).
-Favorites, tags, notes, manual BPM/Key overrides, and Collection
+Favorites, tags, notes, and Collection
 membership all carry over to the renamed file automatically, since a
 track's identity in Disc is tied to its file path — renaming necessarily
 changes that, so this is a deliberate migration step, not something that
@@ -397,8 +394,17 @@ leaving icons looking slightly off-center in a handful of spots.
 knows about (Library, Details, Collections, every folder group, the
 Pomodoro timer below), checked if it's currently open. Closing a panel
 with its own × used to be a dead end short of reloading an entire saved
-layout — now click it here and it reopens right where a fresh one would
-normally land, no layout reload needed.
+layout — now click it here and it reopens where the default layout would
+put it (Folders on the far left, Collections above any extra folder groups,
+Library in the middle, Details/Image/Pomodoro stacked on the right) rather
+than piled up wherever the active panel happens to be, at its usual width.
+
+**Image panel** — an "Image" entry in the same menu opens a panel that shows
+a picture or GIF of your choosing (choose one, or drop a file onto it), for
+a little something to smile at next to your library. Only the file's path is
+remembered — it streams from disk, so a big GIF never has to fit in
+storage — and it travels with profiles like everything else. Hover the
+panel for fit/fill, change, and remove controls.
 
 **Pomodoro timer** — a genuinely new panel type, dockable anywhere like
 any other (add it the first time via the ▤ Windows menu above). Work/
@@ -571,7 +577,7 @@ Shows your system's actual logical core count for reference, with a
 "Match my CPU" option built from it.
 
 **Preload Library (⚙ Settings)** — walks your whole library and eagerly
-decodes every track's waveform and BPM/Key, instead of waiting for you to
+decodes every track's waveform, instead of waiting for you to
 scroll past or open each one. A "Decode speed" option lets you
 temporarily raise how many files get read/decoded at once — Normal (3,
 the same safe default used everywhere else in Disc), up to Maximum (16)
@@ -583,10 +589,10 @@ estimate, keeps running even if you close the Settings modal (it lives
 at the app level, not tied to the modal), and can be cancelled mid-run.
 There's also a small live percentage badge on the ⚙ button itself so you
 can glance at progress without reopening Settings. Skips video clips
-(no analysis pipeline for those) and anything already cached. Good for
-kicking off before you step away — come back and BPM/Key sort, filtering,
-Find Similar, and the Duplicates scan will all have full data to work
-with instead of only whatever you'd happened to open.
+(no waveform pipeline for those) and anything already cached. Good for
+kicking off before you step away — come back and duration sort and the
+Duplicates scan will have full data to work with instead of only whatever
+you'd happened to open.
 
 
 **Edit custom themes** — right-click any custom theme in the theme
@@ -609,34 +615,19 @@ instantly, and don't need a restart:
   own intensity slider. (Note: this replaced the earlier "Bloom" setting
   — if you had that enabled before, you'll want to re-enable Spill once
   after updating, since the two aren't quite the same effect.)
-- **Gradient backgrounds** — panels and backgrounds get a subtle gradient
+- **Gradient backgrounds** (in the Themes dropdown, under its Effects tab, alongside Spill) — panels and backgrounds get a subtle gradient
   instead of a flat color, derived from your current theme (built-in or
   custom — both are handled correctly, since custom themes have no CSS
   fallback to recover a flat color from once it's been gradiented, so
   Disc keeps a separate stable record of each theme's true flat colors
   behind the scenes). Auto angle (top-to-bottom) or set your own, plus an
   intensity slider.
-- **Clean mode** — removes rounded corners app-wide for a sharper, flatter
-  look.
 - **Reduce motion** — turns off transitions and animations throughout the
   app.
 
-**Find Similar + Vibe** — open a track in Details and hit "Find Similar" to
-rank the rest of your library by how similar it sounds: BPM closeness, key
-relatedness, a timbral "chroma shape" comparison, brightness/energy, and
-shared tags (weighted highest, since your own tagging beats anything Disc
-can infer). Worth being upfront about scope: this is **not** genre
-detection — that needs a trained ML model, which isn't something this app
-has. What it does have is honest, real audio features combined into a
-similarity score, plus a transparent "Low/Medium/High energy ·
-Dark/Balanced/Bright" vibe readout built from two real measurements
-(zero-crossing rate and RMS), clearly labeled as what it is. Like the
-Duplicates feature, this only ranks tracks that have already been
-opened/analyzed.
-
 **WAV support** — `.wav` files are fully first-class alongside mp3s, not
-a partial addition like `.mov` below: waveform display, BPM/Key
-detection, Find Similar, tags, notes, everything, since WAV is just
+a partial addition like `.mov` below: waveform display, tags, notes,
+everything, since WAV is just
 another format the Web Audio pipeline already decodes natively. One
 honest heads-up: WAV is uncompressed, so files run much larger than an
 equivalent mp3 — a very large/long WAV will take a bit longer to read
@@ -647,8 +638,8 @@ because there's more data to move, not because of anything Disc-specific.
 mp3s/wavs: tag them, note them, favorite them, add them to Collections,
 drag them straight into Premiere, all the organizational stuff works
 exactly the same. What doesn't: Disc has no video-aware decode/playback
-pipeline, so there's no waveform, no preview playback, and no
-BPM/Key/Vibe analysis for video clips — that's a genuinely different
+pipeline, so there's no waveform and no preview playback for video clips —
+that's a genuinely different
 feature (needs a `<video>` element and a different reading strategy for
 large files, not the audio pipeline this app is built around), so rather
 than build something unreliable, video rows show a clear placeholder
@@ -667,13 +658,8 @@ automatically clears it from the other action, so two things can never
 silently share a key. Ctrl/Cmd+K (command palette) is the one exception —
 it's fixed, matching convention elsewhere.
 
-**Manual BPM/Key override** — open a track in Details and both fields are
-now directly editable, not just auto-detected. A "manual" badge shows when
-you've overridden a value, with a ↺ to go back to the detected one.
-Filtering and sorting by BPM/Key both respect your overrides.
-
 **Library Health Dashboard (🩺 in the title bar)** — one screen showing
-counts of untagged tracks, tracks with no BPM/Key yet, missing/unreachable
+counts of untagged tracks, missing/unreachable
 tracks, and likely duplicates, each with a "View" button that filters the
 whole library (across every folder) down to just that category.
 
@@ -706,11 +692,11 @@ individual tracks. A batch action bar appears with **Favorite/Unfavorite**,
 files on disk into any linked folder or the main music folder).
 
 **Sort** — by folder order (default), name, date added (from the file's
-own creation date on disk), duration, size, or BPM, with an ascending/
-descending toggle. Duration/BPM sort put not-yet-decoded/analyzed tracks
-at the bottom rather than scattering them — and since those only get
-decoded/analyzed as you actually view them, the order can lag a little
-until more of the library's been opened at least once.
+own creation date on disk), duration, or size, with an ascending/
+descending toggle. Duration sort puts not-yet-decoded tracks at the bottom
+rather than scattering them — and since those only get decoded as you
+actually view them, the order can lag a little until more of the library's
+been opened at least once (or preloaded from Settings).
 
 **Missing-file detection** — if a linked folder's directory goes
 unreachable (e.g. an external or network drive gets unplugged), its
@@ -727,7 +713,7 @@ in size by coincidence is very unlikely).
 volume, `/` to jump to search, N/P for next/previous, S for shuffle. Click
 the ⌨ icon in the title bar (or press `?`) for the full list. All of them
 are ignored while you're typing anywhere, so they won't fight with normal
-typing or the BPM slider's own arrow-key behavior.
+typing or a slider's own arrow-key behavior.
 
 **Copy path / Reveal in Explorer / Delete** — right-click any track for
 Copy File Path, Reveal in Explorer, and Delete Song (moves it to the OS
@@ -818,11 +804,7 @@ disc/
       shortcutStorage.js     — default + user-customized keyboard bindings
     audio/
       waveform.js          — waveform peaks, shared AudioContext, concurrency cap
-      analysis.js            — BPM/Key (Goertzel/Krumhansl) + chroma/brightness/energy
-      overrideStorage.js       — save/load manual BPM/Key overrides
-      effectiveAnalysis.js      — merges auto-detected + manual override values
       duplicates.js               — exact-size + waveform-shape duplicate detection
-      similarity.js                 — Find Similar scoring (BPM/key/chroma/tags)
       downsamplePeaks.js              — adapts peak count to available pixel width
     layouts/
       layoutPresets.js    — save/load named dockview layouts
@@ -862,9 +844,5 @@ disc/
    this app is built around. Right now .mov clips are fully organizable
    (tags, notes, favorites, Collections, drag-to-Premiere) but not
    previewable inside Disc.
-4. Optionally: a background "analyze this folder" action for bulk BPM/Key
-   detection, if searching by BPM/Key across a whole unopened library
-   becomes something you want often (traded off against library speed
-   for now).
 
 Let me know what's next.

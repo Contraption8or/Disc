@@ -7,21 +7,16 @@ import { useDisc } from "../context/DiscContext.jsx";
 import { useVirtualRows } from "../hooks/useVirtualRows.js";
 import { isUnderDirectory } from "../utils/paths.js";
 import { isTrackMissing as checkTrackMissing } from "../utils/missingTracks.js";
-import { getEffectiveAnalysis } from "../audio/effectiveAnalysis.js";
-import { getCachedAnalysis } from "../audio/analysis.js";
-import { computeSimilarityScore } from "../audio/similarity.js";
 import { findDuplicateIds } from "../audio/duplicates.js";
 import { getCachedWaveform } from "../audio/waveform.js";
-import { stripExtension } from "../utils/format.js";
 import Icon from "./Icon.jsx";
 import "./LibraryPanel.css";
 
 // Must match the fixed row height set in TrackRow.css — the virtualizer
 // needs a stable number to do its scroll-position math.
 const ROW_HEIGHT = 50;
-const DEFAULT_BPM_RANGE = [40, 220];
 
-function getSortValue(track, key, overrides) {
+function getSortValue(track, key) {
   switch (key) {
     case "name":
       return track.fileName.toLowerCase();
@@ -31,19 +26,17 @@ function getSortValue(track, key, overrides) {
       return getCachedWaveform(track.id)?.duration ?? null;
     case "size":
       return track.sizeBytes ?? null;
-    case "bpm":
-      return getEffectiveAnalysis(track.id, overrides).bpm;
     default:
       return null;
   }
 }
 
-// Tracks missing a sort value (e.g. duration/BPM not decoded/analyzed yet)
+// Tracks missing a sort value (e.g. duration not decoded yet)
 // always sink to the bottom, regardless of direction, rather than being
 // scattered by however 0/undefined happens to compare.
-function sortTracks(list, key, dir, overrides) {
+function sortTracks(list, key, dir) {
   if (key === "folder") return list;
-  const withMeta = list.map((t, i) => ({ t, i, v: getSortValue(t, key, overrides) }));
+  const withMeta = list.map((t, i) => ({ t, i, v: getSortValue(t, key) }));
   withMeta.sort((a, b) => {
     const aNull = a.v === null || a.v === undefined;
     const bNull = b.v === null || b.v === undefined;
@@ -92,22 +85,17 @@ export default function LibraryPanel() {
     trackTags,
     onPlayAll,
     onSelectTrack,
-    analysisTick,
+    waveformTick,
     missingFolderIds,
-    trackOverrides,
     healthFilter,
     onSetHealthFilter,
     tagFilterId,
     onSetTagFilter,
     collections,
-    similarToTrackId,
-    onFindSimilar,
     onDeleteTracks,
   } = useDisc();
 
   const [query, setQuery] = useState("");
-  const [bpmRange, setBpmRange] = useState(DEFAULT_BPM_RANGE);
-  const [keyFilter, setKeyFilter] = useState("Any Key");
   const [sortKey, setSortKey] = useState("folder");
   const [sortDir, setSortDir] = useState("asc");
   const [showDuplicatesOnly, setShowDuplicatesOnly] = useState(false);
@@ -170,23 +158,14 @@ export default function LibraryPanel() {
 
   const trimmedQuery = query.trim();
   const isGlobalSearch = trimmedQuery.length > 0;
-  const hasBpmFilter = bpmRange[0] > DEFAULT_BPM_RANGE[0] || bpmRange[1] < DEFAULT_BPM_RANGE[1];
-  const hasKeyFilter = keyFilter !== "Any Key";
-  const isHealthFiltering = healthFilter === "untagged" || healthFilter === "unanalyzed" || healthFilter === "missing";
+  const isHealthFiltering = healthFilter === "untagged" || healthFilter === "missing";
   const isTagFiltering = Boolean(tagFilterId);
-  const isSimilarMode = Boolean(similarToTrackId);
   const isFiltering =
-    isGlobalSearch ||
-    hasBpmFilter ||
-    hasKeyFilter ||
-    showDuplicatesOnly ||
-    isHealthFiltering ||
-    isTagFiltering ||
-    isSimilarMode;
+    isGlobalSearch || showDuplicatesOnly || isHealthFiltering || isTagFiltering;
 
   // Manual drag-to-reorder only makes sense while looking at one real,
-  // stable folder (or Favorites) — not search results, a Collection, a
-  // Find Similar ranking, or a health-filtered view spanning the whole
+  // stable folder (or Favorites) — not search results, a Collection, or a
+  // health-filtered view spanning the whole
   // library, none of which represent a single ordered list something
   // could meaningfully be "dragged within."
   const orderFolderKey =
@@ -209,12 +188,10 @@ export default function LibraryPanel() {
   }, [healthFilter, onSetHealthFilter]);
 
   // Picking a folder is a clear signal the person wants to go back to
-  // normal browsing, so drop any active health filter or similar-to view
-  // at that point.
+  // normal browsing, so drop any active health or tag filter at that point.
   useEffect(() => {
     if (healthFilter) onSetHealthFilter(null);
     if (tagFilterId) onSetTagFilter(null);
-    if (similarToTrackId) onFindSimilar(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolderId]);
 
@@ -240,30 +217,8 @@ export default function LibraryPanel() {
       );
     }
 
-    if (hasBpmFilter) {
-      result = result.filter((t) => {
-        const effective = getEffectiveAnalysis(t.id, trackOverrides);
-        return (
-          effective.bpm != null &&
-          effective.bpm >= bpmRange[0] &&
-          effective.bpm <= bpmRange[1]
-        );
-      });
-    }
-
-    if (hasKeyFilter) {
-      result = result.filter(
-        (t) => getEffectiveAnalysis(t.id, trackOverrides).key === keyFilter
-      );
-    }
-
     if (healthFilter === "untagged") {
       result = result.filter((t) => !(trackTags[t.id] || []).length);
-    } else if (healthFilter === "unanalyzed") {
-      result = result.filter((t) => {
-        const effective = getEffectiveAnalysis(t.id, trackOverrides);
-        return effective.bpm == null && effective.key == null;
-      });
     } else if (healthFilter === "missing") {
       result = result.filter((t) =>
         checkTrackMissing(t, missingFolderIds, musicFolderPath, customFolders)
@@ -275,8 +230,6 @@ export default function LibraryPanel() {
     }
 
     return result;
-    // analysisTick isn't read directly, but its purpose is to force this
-    // memo to re-run when the (module-level) analysis cache changes.
   }, [
     isGlobalSearch,
     isHealthFiltering,
@@ -287,12 +240,6 @@ export default function LibraryPanel() {
     trimmedQuery,
     tags,
     trackTags,
-    hasBpmFilter,
-    bpmRange,
-    hasKeyFilter,
-    keyFilter,
-    analysisTick,
-    trackOverrides,
     healthFilter,
     tagFilterId,
     missingFolderIds,
@@ -316,68 +263,22 @@ export default function LibraryPanel() {
     return searchFiltered.filter((t) => duplicateIds.has(t.id));
   }, [searchFiltered, showDuplicatesOnly, duplicateIds]);
 
-  // "Find Similar" ranks the whole library by a real-feature similarity
-  // score (BPM, key relatedness, timbral chroma shape, brightness/energy,
-  // shared tags) against one reference track — not genre classification,
-  // just signal-similarity. Only tracks that have already been analyzed
-  // can be scored (same lazy-decode limitation as everywhere else), and
-  // this replaces the normal filter/sort pipeline entirely rather than
-  // composing with it, since it needs its own fixed order (by score).
-  const similarResults = useMemo(() => {
-    if (!similarToTrackId) return null;
-    const referenceAnalysis = getCachedAnalysis(similarToTrackId);
-    if (!referenceAnalysis) return [];
-    const refTagIds = trackTags[similarToTrackId] || [];
-    return allTracks
-      .filter((t) => t.id !== similarToTrackId)
-      .map((t) => {
-        const a = getCachedAnalysis(t.id);
-        if (!a) return null;
-        return {
-          track: t,
-          score: computeSimilarityScore(referenceAnalysis, a, refTagIds, trackTags[t.id] || []),
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.score - a.score);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [similarToTrackId, allTracks, trackTags, analysisTick]);
-
-  const similarReferenceTrack = similarToTrackId
-    ? allTracks.find((t) => t.id === similarToTrackId)
-    : null;
-
   const filteredTracks = useMemo(() => {
-    if (isSimilarMode) return (similarResults || []).map((r) => r.track);
-    const sorted = sortTracks(duplicateFiltered, sortKey, sortDir, trackOverrides);
+    const sorted = sortTracks(duplicateFiltered, sortKey, sortDir);
     if (canManuallyReorder && trackOrder[orderFolderKey]) {
       return applyManualOrder(sorted, trackOrder[orderFolderKey]);
     }
     return sorted;
-    // analysisTick covers BPM re-sorting; duration sort updates lazily as
-    // rows get decoded and won't force a re-sort on its own.
-  }, [
-    isSimilarMode,
-    similarResults,
-    duplicateFiltered,
-    sortKey,
-    sortDir,
-    analysisTick,
-    trackOverrides,
-    canManuallyReorder,
-    orderFolderKey,
-    trackOrder,
-  ]);
+    // waveformTick isn't read directly — it re-runs this when a bulk
+    // preload has filled in more of the (module-level) waveform cache, so
+    // a duration sort picks up the newly-known durations.
+  }, [duplicateFiltered, sortKey, sortDir, waveformTick, canManuallyReorder, orderFolderKey, trackOrder]);
 
   const resultSummary = useMemo(() => {
-    if (!isGlobalSearch && !hasBpmFilter && !hasKeyFilter) return null;
-    const parts = [];
-    if (isGlobalSearch) parts.push(`"${trimmedQuery}"`);
-    if (hasKeyFilter) parts.push(`Key: ${keyFilter}`);
-    if (hasBpmFilter) parts.push(`${bpmRange[0]}–${bpmRange[1]} BPM`);
+    if (!isGlobalSearch) return null;
     const n = filteredTracks.length;
-    return `${n} result${n === 1 ? "" : "s"} for ${parts.join(" · ")}`;
-  }, [isGlobalSearch, trimmedQuery, hasKeyFilter, keyFilter, hasBpmFilter, bpmRange, filteredTracks.length]);
+    return `${n} result${n === 1 ? "" : "s"} for "${trimmedQuery}"`;
+  }, [isGlobalSearch, trimmedQuery, filteredTracks.length]);
 
   // Which real directories are currently unreachable, for per-track
   // "missing" flagging regardless of which view is showing them.
@@ -560,10 +461,6 @@ export default function LibraryPanel() {
       <LibraryToolbar
         query={query}
         onQueryChange={setQuery}
-        bpmRange={bpmRange}
-        onBpmRangeChange={setBpmRange}
-        keyFilter={keyFilter}
-        onKeyFilterChange={setKeyFilter}
         resultSummary={resultSummary}
         onPlayAll={handlePlayAllClick}
         onShufflePlay={handleShufflePlayClick}
@@ -597,29 +494,10 @@ export default function LibraryPanel() {
         <NowPlayingBar />
       )}
 
-      {isSimilarMode && (
-        <div className="library-panel__missing-banner">
-          Similar to "{similarReferenceTrack ? stripExtension(similarReferenceTrack.fileName) : "…"}"
-          {" "}— ranked by BPM, key, timbre, energy, and shared tags (not
-          genre), among the {(similarResults || []).length} tracks you've
-          already opened.{" "}
-          <button
-            className="library-panel__clear-health"
-            onClick={() => onFindSimilar(null)}
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
       {healthFilter && (
         <div className="library-panel__missing-banner">
           Showing:{" "}
-          {healthFilter === "untagged"
-            ? "tracks with no tags"
-            : healthFilter === "unanalyzed"
-            ? "tracks with no BPM/Key detected yet"
-            : "missing/unreachable tracks"}{" "}
+          {healthFilter === "untagged" ? "tracks with no tags" : "missing/unreachable tracks"}{" "}
           across your whole library.{" "}
           <button
             className="library-panel__clear-health"
@@ -706,20 +584,14 @@ export default function LibraryPanel() {
               </div>
               <div className="library-empty__title">No matches</div>
               <p className="library-empty__text">
-                {isSimilarMode
-                  ? "No other tracks have been analyzed yet — open a few more in Details, then try Find Similar again."
-                  : showDuplicatesOnly
+                {showDuplicatesOnly
                   ? duplicatesGlobal
                     ? "No likely duplicates found anywhere in your library."
                     : "No likely duplicates found in this view. Shift-click Duplicates to check the whole library."
                   : healthFilter === "untagged"
                   ? "Every track in your library has at least one tag. Nice."
-                  : healthFilter === "unanalyzed"
-                  ? "Every track has a BPM/Key already (detected or manually set)."
                   : healthFilter === "missing"
                   ? "No missing/unreachable tracks right now."
-                  : hasBpmFilter || hasKeyFilter
-                  ? "Nothing matches these filters — note BPM/Key filtering only considers tracks that have already been analyzed (open a track in Details at least once)."
                   : `Nothing matches "${trimmedQuery}".`}
               </p>
             </div>

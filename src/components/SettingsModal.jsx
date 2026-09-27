@@ -251,8 +251,8 @@ export default function SettingsModal({ onClose }) {
           <>
             <p className="settings-modal__note settings-modal__note--top">
               {candidateCount === 0
-                ? "Everything's already loaded — waveforms and BPM/Key are cached for your whole library."
-                : `${candidateCount} of ${allTracks.length} tracks don't have a waveform/BPM/Key cached yet. Decode and analyze all of them now — leave it running and come back once it's done.`}
+                ? "Everything's already loaded — waveforms are cached for your whole library."
+                : `${candidateCount} of ${allTracks.length} tracks don't have a waveform cached yet. Decode all of them now — leave it running and come back once it's done.`}
             </p>
             {candidateCount > 0 && (
               <div className="settings-modal__slider-row">
@@ -340,18 +340,6 @@ export default function SettingsModal({ onClose }) {
 
         <label className="settings-modal__toggle-row">
           <span>
-            Clean mode
-            <span className="settings-modal__hint"> — removes rounded corners app-wide</span>
-          </span>
-          <input
-            type="checkbox"
-            checked={appearanceSettings.cleanMode}
-            onChange={(e) => onSetAppearance({ cleanMode: e.target.checked })}
-          />
-        </label>
-
-        <label className="settings-modal__toggle-row">
-          <span>
             Reduce motion
             <span className="settings-modal__hint"> — disables transitions/animations</span>
           </span>
@@ -362,110 +350,9 @@ export default function SettingsModal({ onClose }) {
           />
         </label>
 
-        <label className="settings-modal__toggle-row">
-          <span>
-            Liquid Glass buttons
-            <span className="settings-modal__hint">
-              {" "}
-              — a frosted, translucent look for the title bar, toolbar, and
-              other main buttons
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            checked={appearanceSettings.glassButtons}
-            onChange={(e) => onSetAppearance({ glassButtons: e.target.checked })}
-          />
-        </label>
-
-        <label className="settings-modal__toggle-row">
-          <span>Spill</span>
-          <input
-            type="checkbox"
-            checked={appearanceSettings.spillEnabled}
-            onChange={(e) => onSetAppearance({ spillEnabled: e.target.checked })}
-          />
-        </label>
-        {appearanceSettings.spillEnabled && (
-          <div className="settings-modal__slider-row">
-            <span className="settings-modal__slider-label">Intensity</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={appearanceSettings.spillIntensity}
-              onChange={(e) =>
-                onSetAppearance({ spillIntensity: Number(e.target.value) })
-              }
-            />
-          </div>
-        )}
-
-        <label className="settings-modal__toggle-row">
-          <span>Gradient backgrounds</span>
-          <input
-            type="checkbox"
-            checked={appearanceSettings.gradientEnabled}
-            onChange={(e) => onSetAppearance({ gradientEnabled: e.target.checked })}
-          />
-        </label>
         <p className="settings-modal__note settings-modal__note--top">
-          A subtle gradient across panels and backgrounds instead of a flat
-          color, derived from your current theme.
+          Gradient backgrounds and Spill live in the Themes dropdown, under the Effects tab.
         </p>
-        {appearanceSettings.gradientEnabled && (
-          <>
-            <div className="settings-modal__slider-row">
-              <span className="settings-modal__slider-label">Intensity</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={appearanceSettings.gradientIntensity}
-                onChange={(e) =>
-                  onSetAppearance({ gradientIntensity: Number(e.target.value) })
-                }
-              />
-            </div>
-            <div className="settings-modal__radio-row">
-              <label>
-                <input
-                  type="radio"
-                  name="gradient-mode"
-                  checked={appearanceSettings.gradientMode === "auto"}
-                  onChange={() => onSetAppearance({ gradientMode: "auto" })}
-                />
-                Auto angle
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="gradient-mode"
-                  checked={appearanceSettings.gradientMode === "manual"}
-                  onChange={() => onSetAppearance({ gradientMode: "manual" })}
-                />
-                Manual angle
-              </label>
-            </div>
-            {appearanceSettings.gradientMode === "manual" && (
-              <div className="settings-modal__slider-row">
-                <span className="settings-modal__slider-label">Angle</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="360"
-                  step="5"
-                  value={appearanceSettings.gradientAngle}
-                  onChange={(e) =>
-                    onSetAppearance({ gradientAngle: Number(e.target.value) })
-                  }
-                />
-              </div>
-            )}
-          </>
-        )}
 
         <div className="settings-modal__actions">
           <button className="settings-modal__cancel" style={{ width: "100%" }} onClick={onClose}>

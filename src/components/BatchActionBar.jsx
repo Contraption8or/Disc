@@ -118,6 +118,7 @@ export default function BatchActionBar({ selectedIds, onClear }) {
         {tagCreateOpen && (
           <TagCreateMenu
             onCreate={handleCreateAndAssignTag}
+            onUseExisting={(tag) => onAssignTagToTracks(ids, tag.id)}
             onClose={() => setTagCreateOpen(false)}
           />
         )}

@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld("disc", {
   getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
   statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
   chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
+  chooseImage: () => ipcRenderer.invoke("disc:choose-image"),
   chooseConvertibleFolder: () => ipcRenderer.invoke("disc:choose-convertible-folder"),
   scanForConvertible: (rootDir) => ipcRenderer.invoke("disc:scan-for-convertible", rootDir),
   writeConvertedMp3: (destFolder, fileName, bytes) =>

@@ -34,6 +34,8 @@ export default function TitleBar({
   knownPanels,
   openPanelIds,
   onTogglePanel,
+  appearanceSettings,
+  onSetAppearance,
 }) {
   // The window-snap system (see electron/main.js) needs to know exactly
   // when a title-bar drag actually ends, not just "no movement for a
@@ -134,7 +136,7 @@ export default function TitleBar({
           title="Compact mode"
           onClick={onToggleCompactMode}
         >
-          <Icon name="compact" size={14} />
+          <Icon name="compress" size={14} />
         </button>
         <button
           className={"titlebar__pin" + (pinned ? " titlebar__pin--active" : "")}
@@ -159,6 +161,8 @@ export default function TitleBar({
           theme={theme}
           onChange={onThemeChange}
           onPreviewCancel={onThemePreviewCancel}
+          appearanceSettings={appearanceSettings}
+          onSetAppearance={onSetAppearance}
         />
         <div className="titlebar__divider" />
         <WindowControls />

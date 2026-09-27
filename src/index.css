@@ -23,6 +23,24 @@ button {
   font-family: inherit;
 }
 
+/* Selection + keyboard focus — visible, on-brand, and only when the
+   keyboard is actually driving (mouse clicks don't get a ring). */
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Scrollbars stay out of the way until you're actually scrolling/hovering
+   the area they belong to. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -33,13 +51,61 @@ button {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
   border-radius: var(--radius-full);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--bg-active);
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
   background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Sliders: a slim rounded track and a small accent thumb instead of the
+   browser default, so volume / Pomodoro / settings all match. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s var(--ease-out);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+
+input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.05);
+}
+
+input[type="range"]:focus-visible {
+  box-shadow: none;
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--focus-ring);
 }

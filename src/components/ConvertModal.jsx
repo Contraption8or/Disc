@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import { convertToMp3 } from "../audio/audioConverter.js";
 import Dropdown from "./Dropdown.jsx";
@@ -22,6 +22,26 @@ export default function ConvertModal({ onClose }) {
   const [progress, setProgress] = useState({ completed: 0, total: 0, currentName: "" });
   const [results, setResults] = useState({ succeeded: [], skipped: [], failed: [], wasCancelled: false });
   const cancelRef = useRef(false);
+  const rootRef = useRef(null);
+
+  // Clicking anywhere outside the dialog (or pressing Escape) closes it,
+  // same as the other popups — except mid-conversion, where an accidental
+  // click shouldn't be able to dismiss the only view of a running job.
+  useEffect(() => {
+    if (status === "running") return;
+    function handleClickOutside(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) onClose();
+    }
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [status, onClose]);
 
   const destFolder = linkedFolders.find((f) => f.id === destFolderId);
 
@@ -102,7 +122,7 @@ export default function ConvertModal({ onClose }) {
 
   return (
     <div className="settings-modal__backdrop">
-      <div className="convert-modal">
+      <div className="convert-modal" ref={rootRef}>
         <div className="settings-modal__title">Convert audio to .mp3</div>
 
         {status === "idle" && (

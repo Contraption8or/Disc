@@ -1,0 +1,109 @@
+.image-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.image-panel--drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+}
+
+.image-panel__img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+}
+
+/* Controls stay out of the picture until you hover the panel. */
+.image-panel__controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.image-panel:hover .image-panel__controls,
+.image-panel:focus-within .image-panel__controls {
+  opacity: 1;
+}
+
+.image-panel__control {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 15, 18, 0.72);
+  color: #f2f2f4;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.image-panel__control:hover {
+  background: rgba(15, 15, 18, 0.92);
+}
+
+.image-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-4);
+  max-width: 260px;
+  text-align: center;
+}
+
+.image-panel__empty-icon {
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.image-panel__empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.image-panel__empty-body {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.image-panel__choose {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 14px;
+  height: 30px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.image-panel__choose:hover {
+  background: var(--accent-hover);
+}

@@ -15,22 +15,38 @@
  * is active. dockview occasionally renames a variable between versions;
  * if a couple of surfaces don't pick up the theme after `npm install`,
  * check the installed version's docs and adjust the names below.
+ *
+ * Note on selectors: dockview 1.x does NOT prefix its own class names
+ * (it's .tab / .void-container / .groupview, not .dv-tab) — only the
+ * default-tab internals carry a dv- prefix. Rules below use the real names.
  */
 .dockview-theme-disc {
   --dv-background-color: var(--bg-app);
   --dv-group-view-background-color: var(--bg-app);
 
+  --dv-tabs-and-actions-container-height: 36px;
+  --dv-tabs-and-actions-container-font-size: 12.5px;
   --dv-tabs-and-actions-container-background-color: var(--bg-panel);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-app);
-  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-panel);
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-app);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-panel);
-  --dv-tab-background-color: var(--bg-panel);
+
+  /* Tabs are flat text on the header bar; the active one is marked by an
+     underline (below) rather than a filled box, which reads far cleaner
+     than three slightly different rectangles side by side. */
+  --dv-activegroup-visiblepanel-tab-background-color: transparent;
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: transparent;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-background-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-tertiary);
   --dv-tab-color: var(--text-secondary);
+  --dv-tab-divider-color: transparent;
 
   --dv-separator-border: var(--border-color);
   --dv-paneview-header-border-color: var(--border-color);
   --dv-active-sash-color: var(--accent);
+  --dv-separator-handle-hover-background-color: var(--accent);
 
   --dv-icon-hover-background-color: var(--bg-hover);
   --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -40,12 +56,65 @@
   font-size: 13px;
 }
 
-.dockview-theme-disc .dv-tab {
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+.dockview-theme-disc .void-container {
+  background: transparent;
 }
 
-.dockview-theme-disc .dv-void-container {
-  background: var(--bg-app);
+.dockview-theme-disc .groupview > .tabs-and-actions-container {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dockview-theme-disc .tab {
+  position: relative;
+  border-radius: 0;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.dockview-theme-disc .tab:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.dockview-theme-disc .tab .dv-default-tab {
+  padding: 0 8px 0 14px;
+  gap: 8px;
+}
+
+/* The underline: muted in an unfocused group, accent in the active one. */
+.dockview-theme-disc .tab.active-tab::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--text-tertiary);
+  transition: background 0.15s ease;
+}
+
+.dockview-theme-disc .groupview.active-group .tab.active-tab::after {
+  background: var(--accent);
+}
+
+/* Close button: quiet until you're on the tab, then a proper hit target. */
+.dockview-theme-disc .dv-default-tab-action {
+  opacity: 0;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.dockview-theme-disc .tab:hover .dv-default-tab-action,
+.dockview-theme-disc .tab.active-tab .dv-default-tab-action {
+  opacity: 0.55;
+}
+
+.dockview-theme-disc .tab .dv-default-tab-action:hover {
+  opacity: 1;
+  background: var(--bg-hover);
 }
 
 .undo-toast {

@@ -6,9 +6,10 @@
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   overflow: hidden;
   user-select: none;
+  transition: background 0.12s ease;
 }
 
 .track-row:hover {
@@ -16,7 +17,20 @@
 }
 
 .track-row--active {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* A slim accent bar marks the row that's currently loaded, so it's easy to
+   spot in a long list without shouting. */
+.track-row--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
 }
 
 .track-row--multi-selected {

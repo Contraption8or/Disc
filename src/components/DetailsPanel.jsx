@@ -1,20 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import { computeWaveform, getCachedWaveform } from "../audio/waveform.js";
-import { computeAnalysis, getCachedAnalysis } from "../audio/analysis.js";
-import { describeVibe } from "../audio/similarity.js";
 import { downsamplePeaks } from "../audio/downsamplePeaks.js";
 import { getSectionDragPath, prepareSectionDrag } from "../audio/sectionDrag.js";
 import { useElementWidth } from "../hooks/useElementWidth.js";
 import { formatSize, formatDuration, stripExtension } from "../utils/format.js";
 import TagAssignMenu from "./TagAssignMenu.jsx";
 import TagContextMenu from "./TagContextMenu.jsx";
-import Dropdown from "./Dropdown.jsx";
 import Icon from "./Icon.jsx";
 import "./DetailsPanel.css";
 
 const BAR_PX = 3;
-const KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 // One row in the marked-sections list. Dragging it out hands Premiere just
 // that section's audio, not the whole track — which means Disc first has
@@ -101,12 +97,8 @@ export default function DetailsPanel() {
     onToggleTrackTag,
     onCreateTag,
     onDeleteTag,
-    onAnalysisUpdated,
     trackNotes,
     onSetTrackNote,
-    trackOverrides,
-    onSetTrackOverride,
-    onFindSimilar,
   } = useDisc();
 
   const track = allTracks.find((t) => t.id === selectedTrackId) || null;
@@ -114,10 +106,6 @@ export default function DetailsPanel() {
   const [waveformData, setWaveformData] = useState(() =>
     track && !isVideo ? getCachedWaveform(track.id) : null
   );
-  const [analysis, setAnalysis] = useState(() =>
-    track && !isVideo ? getCachedAnalysis(track.id) : null
-  );
-  const [analyzing, setAnalyzing] = useState(false);
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   // Fraction (0-1) captured by "Mark In", waiting on "Mark Out" to
   // complete a new section. Reset whenever the displayed track changes,
@@ -154,38 +142,6 @@ export default function DetailsPanel() {
     };
   }, [track, isVideo]);
 
-  // BPM/Key detection is heavier than waveform decoding, so it's only run
-  // when a track is actually opened here — not for every row that scrolls
-  // into view in the library list. Video clips don't get this at all;
-  // Disc's audio analysis pipeline doesn't operate on video containers.
-  useEffect(() => {
-    if (!track || isVideo) {
-      setAnalysis(null);
-      setAnalyzing(false);
-      return;
-    }
-    const cached = getCachedAnalysis(track.id);
-    if (cached) {
-      setAnalysis(cached);
-      setAnalyzing(false);
-      return;
-    }
-    setAnalysis(null);
-    setAnalyzing(true);
-    let cancelled = false;
-    computeAnalysis(track).then((data) => {
-      if (cancelled) return;
-      setAnalyzing(false);
-      if (data) {
-        setAnalysis(data);
-        onAnalysisUpdated();
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [track, isVideo, onAnalysisUpdated]);
-
   if (!track) {
     return (
       <div className="details-panel">
@@ -195,7 +151,7 @@ export default function DetailsPanel() {
           </div>
           <div className="details-panel__title">No track selected</div>
           <p className="details-panel__text">
-            Select a track to see its waveform, tags, BPM, and key here.
+            Select a track to see its waveform, tags, and notes here.
           </p>
         </div>
       </div>
@@ -212,12 +168,6 @@ export default function DetailsPanel() {
     const id = onCreateTag(name, color);
     if (id) onToggleTrackTag(track.id, id);
   }
-
-  const override = trackOverrides[track.id] || {};
-  const bpmIsOverride = override.bpm != null;
-  const keyIsOverride = Boolean(override.key);
-  const effectiveBpm = override.bpm ?? analysis?.bpm ?? "";
-  const effectiveKey = override.key ?? analysis?.key ?? "";
 
   // This waveform is purely visual otherwise — no native drag-out here
   // (that's the Library row's job), so there's no conflicting gesture to
@@ -472,86 +422,6 @@ export default function DetailsPanel() {
             </div>
           )}
         </div>
-      )}
-
-      {!isVideo && (
-        <>
-          <div className="details-panel__section-grid">
-            <div className="details-panel__section">
-              <div className="details-panel__section-title">
-                BPM{bpmIsOverride && <span className="details-panel__manual-tag">manual</span>}
-              </div>
-              <div className="details-panel__value-row">
-                <input
-                  key={track.id + "-bpm"}
-                  type="number"
-                  className="details-panel__value details-panel__value--input"
-                  defaultValue={effectiveBpm}
-                  placeholder={analyzing ? "…" : "—"}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    onSetTrackOverride(track.id, "bpm", v ? Number(v) : null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                  }}
-                />
-                {bpmIsOverride && (
-                  <button
-                    className="details-panel__value-reset"
-                    title="Reset to auto-detected value"
-                    onClick={() => onSetTrackOverride(track.id, "bpm", null)}
-                  >
-                    <Icon name="undo" size={12} />
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="details-panel__section">
-              <div className="details-panel__section-title">
-                KEY{keyIsOverride && <span className="details-panel__manual-tag">manual</span>}
-              </div>
-              <div className="details-panel__value-row">
-                <Dropdown
-                  className="details-panel__value details-panel__value--input"
-                  value={effectiveKey}
-                  onChange={(v) => onSetTrackOverride(track.id, "key", v || null)}
-                  options={[
-                    { value: "", label: analyzing ? "…" : "—" },
-                    ...KEY_OPTIONS.map((k) => ({ value: k, label: k })),
-                  ]}
-                />
-                {keyIsOverride && (
-                  <button
-                    className="details-panel__value-reset"
-                    title="Reset to auto-detected value"
-                    onClick={() => onSetTrackOverride(track.id, "key", null)}
-                  >
-                    <Icon name="undo" size={12} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {analysis && (
-            <div className="details-panel__section">
-              <div className="details-panel__section-title">Vibe</div>
-              <div className="details-panel__vibe-row">
-                <span className="details-panel__vibe-label">
-                  {describeVibe(analysis) || "—"}
-                </span>
-                <button
-                  className="details-panel__find-similar"
-                  onClick={() => onFindSimilar(track.id)}
-                  title="Rank the rest of your library by how similar it sounds — BPM, key, timbre, and shared tags, not a genre guess"
-                >
-                  Find Similar
-                </button>
-              </div>
-            </div>
-          )}
-        </>
       )}
 
       {tagContextMenu && (

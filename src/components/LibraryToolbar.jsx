@@ -5,28 +5,17 @@ import Dropdown from "./Dropdown.jsx";
 import Icon from "./Icon.jsx";
 import "./LibraryToolbar.css";
 
-const KEYS = [
-  "Any Key",
-  "C", "C#", "D", "D#", "E", "F",
-  "F#", "G", "G#", "A", "A#", "B",
-];
-
 const SORT_OPTIONS = [
   { value: "folder", label: "Folder order" },
   { value: "name", label: "Name" },
   { value: "dateAdded", label: "Date added" },
   { value: "duration", label: "Duration" },
   { value: "size", label: "Size" },
-  { value: "bpm", label: "BPM" },
 ];
 
 export default function LibraryToolbar({
   query,
   onQueryChange,
-  bpmRange,
-  onBpmRangeChange,
-  keyFilter,
-  onKeyFilterChange,
   resultSummary,
   onPlayAll,
   onShufflePlay,
@@ -57,21 +46,6 @@ export default function LibraryToolbar({
     setLocalQuery(next);
     clearTimeout(queryDebounceRef.current);
     queryDebounceRef.current = setTimeout(() => onQueryChange(next), 120);
-  }
-
-  // The BPM sliders update this instantly (so dragging feels smooth), but
-  // only push the real, filter-triggering value up after a short pause —
-  // re-filtering the whole library on every pixel of drag was the
-  // expensive part, not moving the slider itself.
-  const [localBpm, setLocalBpm] = useState(bpmRange);
-  const bpmDebounceRef = useRef(null);
-
-  useEffect(() => () => clearTimeout(bpmDebounceRef.current), []);
-
-  function commitBpmRange(next) {
-    setLocalBpm(next);
-    clearTimeout(bpmDebounceRef.current);
-    bpmDebounceRef.current = setTimeout(() => onBpmRangeChange(next), 120);
   }
 
   return (
@@ -118,41 +92,6 @@ export default function LibraryToolbar({
           />
         )}
       </div>
-
-      <div className="library-toolbar__divider" />
-
-      <div className="library-toolbar__bpm">
-        <span className="library-toolbar__label">BPM</span>
-        <span className="library-toolbar__bpm-value">{localBpm[0]}</span>
-        <input
-          type="range"
-          min="40"
-          max="220"
-          value={localBpm[0]}
-          onChange={(e) =>
-            commitBpmRange([Number(e.target.value), localBpm[1]])
-          }
-        />
-        <input
-          type="range"
-          min="40"
-          max="220"
-          value={localBpm[1]}
-          onChange={(e) =>
-            commitBpmRange([localBpm[0], Number(e.target.value)])
-          }
-        />
-        <span className="library-toolbar__bpm-value">{localBpm[1]}</span>
-      </div>
-
-      <div className="library-toolbar__divider" />
-
-      <Dropdown
-        className="library-toolbar__key"
-        value={keyFilter}
-        onChange={onKeyFilterChange}
-        options={KEYS.map((k) => ({ value: k, label: k }))}
-      />
 
       <div className="library-toolbar__divider" />
 

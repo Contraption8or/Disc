@@ -57,6 +57,16 @@ const MEDIA_MIME_TYPES = {
   ".opus": "audio/opus",
   ".flac": "audio/flac",
   ".webm": "audio/webm",
+  // The Image panel (see ImagePanel.jsx) streams its picture through this
+  // same protocol rather than storing image bytes in localStorage.
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
 };
 
 function mediaMimeType(filePath) {
@@ -845,9 +855,28 @@ ipcMain.on("disc:set-snap-accent-color", (_event, hex) => {
 // PomodoroProvider either way; this window is a synced remote display/
 // control, not a second independent timer (see the BroadcastChannel setup
 // in PomodoroContext.jsx).
+// Brings a window to the very front and gives it focus. A plain
+// show()/focus() from a window that was just created (or is sitting behind
+// another one) isn't reliable on Windows — its focus-stealing prevention
+// quietly leaves the new window behind whatever was already active, which
+// is exactly how the Pomodoro popup kept opening underneath Disc. Briefly
+// flagging it always-on-top forces it above everything, then the flag is put
+// back to whatever it was so a normal (un-pinned) window doesn't stay
+// pinned afterwards.
+function raiseWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  const wasOnTop = win.isAlwaysOnTop();
+  win.setAlwaysOnTop(true);
+  win.show();
+  win.moveTop();
+  win.focus();
+  if (!wasOnTop) win.setAlwaysOnTop(false);
+}
+
 function createPomodoroWindow() {
   if (pomodoroWindow) {
-    pomodoroWindow.focus();
+    raiseWindow(pomodoroWindow);
     return;
   }
   pomodoroWindow = new BrowserWindow({
@@ -855,6 +884,7 @@ function createPomodoroWindow() {
     height: 260,
     minWidth: 180,
     minHeight: 220,
+    show: false, // shown (and raised) on ready-to-show below
     backgroundColor: "#1b1b1f",
     title: "Disc — Pomodoro",
     frame: false,
@@ -879,6 +909,8 @@ function createPomodoroWindow() {
       search: "pomodoroWindow=1",
     });
   }
+
+  pomodoroWindow.once("ready-to-show", () => raiseWindow(pomodoroWindow));
 
   pomodoroWindow.on("closed", () => {
     pomodoroWindow = null;
@@ -1471,6 +1503,22 @@ ipcMain.handle("disc:read-audio-file", async (_event, filePath) => {
 // reliably decodes — leaving out things like WMA that aren't a
 // web-standard format and can't be promised to work.
 const CONVERTIBLE_EXTENSIONS = ["ogg", "wav", "flac", "m4a", "aac", "opus", "webm"];
+
+ipcMain.handle("disc:choose-image", async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose an image or GIF",
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Images",
+        extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg"],
+      },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
 
 ipcMain.handle("disc:choose-convertible-files", async () => {
   if (!mainWindow) return [];
