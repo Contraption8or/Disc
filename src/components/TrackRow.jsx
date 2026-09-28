@@ -303,6 +303,10 @@ function TrackRow({
             <Icon name="video" size={12} style={{ marginRight: 5 }} />
             Video clip — drag to use
           </div>
+        ) : waveformData?.tooLarge ? (
+          <div className="track-row__video-placeholder" title="Over 50MB — plays normally, just skipped for waveform to avoid a very large decode">
+            Too large to analyze — drag to use
+          </div>
         ) : waveformData ? (
           <div className="track-row__bars-in" key="loaded">
             {downsamplePeaks(waveformData.peaks, barCount).map((peak, i) => (

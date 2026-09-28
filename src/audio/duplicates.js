@@ -42,7 +42,11 @@ export function findDuplicateIds(allTracks) {
 
   const withWaveform = allTracks
     .map((t) => ({ t, w: getCachedWaveform(t.id) }))
-    .filter((x) => x.w);
+    // A track over the size guard in waveform.js caches a { peaks: null,
+    // tooLarge: true } sentinel rather than never resolving — truthy, but
+    // not actually comparable, so this needs to check for real peaks too,
+    // not just that some cache entry exists.
+    .filter((x) => x.w?.peaks);
 
   for (let i = 0; i < withWaveform.length; i++) {
     for (let j = i + 1; j < withWaveform.length; j++) {

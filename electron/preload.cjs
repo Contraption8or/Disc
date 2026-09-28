@@ -94,4 +94,7 @@ contextBridge.exposeInMainWorld("disc", {
   exportProfileToFile: (profileName, data) =>
     ipcRenderer.invoke("disc:export-profile-to-file", { profileName, data }),
   importProfileFromFile: () => ipcRenderer.invoke("disc:import-profile-from-file"),
+  openDevTools: () => ipcRenderer.invoke("disc:open-devtools"),
+  revealCrashLog: () => ipcRenderer.invoke("disc:reveal-crash-log"),
+  readRecentCrashes: () => ipcRenderer.invoke("disc:read-recent-crashes"),
 });

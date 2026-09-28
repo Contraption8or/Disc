@@ -256,6 +256,11 @@ export default function DetailsPanel() {
             Video clip — Disc doesn't preview video, but you can still
             drag it into Premiere
           </div>
+        ) : waveformData?.tooLarge ? (
+          <div className="details-panel__waveform-loading">
+            Over 50MB — plays normally, but skipped for waveform to avoid a
+            very large decode
+          </div>
         ) : waveformData ? (
           <div className="details-panel__bars-in" key="loaded">
             {downsamplePeaks(waveformData.peaks, barCount).map((p, i) => (
