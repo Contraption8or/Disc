@@ -5,6 +5,7 @@ import { watch, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSy
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { createRequire } from "node:module";
 import AdmZip from "adm-zip";
@@ -146,6 +147,139 @@ function saveSettings(settings) {
     // Best effort — worst case the setting doesn't persist.
   }
 }
+
+// --- Studio Sync: per-device identity + append-only event log ---------
+// See docs/collab-sync-scope.md. Each install gets a random id (never
+// synced — it's what names this device's own log file) and an editable
+// display name. Deliberately stored outside userData's Local Storage
+// (which is what the renderer's own localStorage uses) since this needs
+// to be readable before/without a renderer at all, same reasoning as
+// disc-settings.json above.
+const deviceIdentityPath = path.join(app.getPath("userData"), "device-identity.json");
+
+// Folder used inside a shared/synced music directory for the event log —
+// same "dot-prefixed, explicitly skipped by the scanner" pattern as
+// SECTIONS_DIR_NAME above, so it never shows up as library content.
+const SYNC_DIR_NAME = ".disc-sync";
+
+function loadDeviceIdentity() {
+  try {
+    return JSON.parse(readFileSync(deviceIdentityPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveDeviceIdentity(identity) {
+  try {
+    const dir = path.dirname(deviceIdentityPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(deviceIdentityPath, JSON.stringify(identity, null, 2));
+  } catch {
+    // Best effort — worst case a new id gets generated next launch.
+  }
+}
+
+ipcMain.handle("disc:get-device-identity", () => {
+  let identity = loadDeviceIdentity();
+  if (!identity?.id) {
+    identity = { id: randomUUID(), name: os.hostname() || "This PC" };
+    saveDeviceIdentity(identity);
+  }
+  return identity;
+});
+
+ipcMain.handle("disc:set-device-name", (_event, name) => {
+  const identity = loadDeviceIdentity() || { id: randomUUID() };
+  identity.name = (name || "").trim() || identity.name || "This PC";
+  saveDeviceIdentity(identity);
+  return identity;
+});
+
+// Appends this device's own batch of sync events to its own .jsonl file —
+// never any other device's file, so two machines writing at once (the
+// scenario that actually risks corruption over something like Resilio
+// Sync) can never collide at the filesystem level. One line per event,
+// newline-delimited, so a partial file sync mid-transfer just means a few
+// missing recent lines rather than one unparseable blob.
+ipcMain.handle("disc:append-sync-events", async (_event, { rootDir, deviceId, events }) => {
+  if (!rootDir || !deviceId || !events?.length) return { ok: false };
+  try {
+    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${deviceId}.jsonl`);
+    const lines = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    appendFileSync(filePath, lines, "utf8");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+// Reads every device's event log plus its published display name (a
+// small separate .meta.json per device, since the device's actual name
+// lives locally in device-identity.json and is never itself an event).
+// Skips any single line that fails to parse — a partial trailing line
+// from a sync still mid-transfer — rather than failing the whole read;
+// the rest of that device's history is still perfectly valid.
+ipcMain.handle("disc:read-sync-state", async (_event, rootDir) => {
+  if (!rootDir) return { events: [], deviceNames: {} };
+  const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+  let entries;
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return { events: [], deviceNames: {} };
+  }
+
+  const events = [];
+  const deviceNames = {};
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry);
+    if (entry.endsWith(".jsonl")) {
+      let text;
+      try {
+        text = await fs.readFile(full, "utf8");
+      } catch {
+        continue;
+      }
+      for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          events.push(JSON.parse(trimmed));
+        } catch {
+          // Partial trailing line — skip, see comment above.
+        }
+      }
+    } else if (entry.endsWith(".meta.json")) {
+      try {
+        const meta = JSON.parse(await fs.readFile(full, "utf8"));
+        if (meta?.id) deviceNames[meta.id] = meta.name || meta.id;
+      } catch {
+        // Malformed/partially-synced meta file — ignore it.
+      }
+    }
+  }
+
+  return { events, deviceNames };
+});
+
+// Publishes this device's display name into the shared folder so other
+// machines can show "Peter's PC" instead of a raw device id — the id
+// itself already names the .jsonl file, this is purely the human label.
+ipcMain.handle("disc:write-device-meta", async (_event, { rootDir, id, name }) => {
+  if (!rootDir || !id) return { ok: false };
+  try {
+    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `${id}.meta.json`), JSON.stringify({ id, name }, null, 2));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
 
 // V8's heap size flag only takes effect if set before the app (and its
 // renderer processes) actually start, so this has to happen here at the
@@ -1528,7 +1662,7 @@ async function scanForMp3s(rootDir) {
         // Marked-section clips (see sectionsDirFor above) live right next
         // to their source track, inside a folder a normal scan would
         // otherwise happily walk into and list as real library tracks.
-        if (entry.name === SECTIONS_DIR_NAME) continue;
+        if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
         await walk(fullPath);
       } else if (fileType) {
         let sizeBytes = 0;
@@ -1643,7 +1777,7 @@ ipcMain.handle("disc:scan-for-convertible", async (_event, rootDir) => {
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === SECTIONS_DIR_NAME) continue;
+        if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
         await walk(fullPath);
       } else if (entry.isFile()) {
         const ext = entry.name.toLowerCase().split(".").pop();

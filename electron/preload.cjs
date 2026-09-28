@@ -100,4 +100,11 @@ contextBridge.exposeInMainWorld("disc", {
   diagnoseTrack: (filePath) => ipcRenderer.invoke("disc:diagnose-track", filePath),
   repairTrackFile: (filePath, bytes) =>
     ipcRenderer.invoke("disc:repair-track-file", { filePath, bytes }),
+  getDeviceIdentity: () => ipcRenderer.invoke("disc:get-device-identity"),
+  setDeviceName: (name) => ipcRenderer.invoke("disc:set-device-name", name),
+  appendSyncEvents: (rootDir, deviceId, events) =>
+    ipcRenderer.invoke("disc:append-sync-events", { rootDir, deviceId, events }),
+  readSyncState: (rootDir) => ipcRenderer.invoke("disc:read-sync-state", rootDir),
+  writeDeviceMeta: (rootDir, id, name) =>
+    ipcRenderer.invoke("disc:write-device-meta", { rootDir, id, name }),
 });
