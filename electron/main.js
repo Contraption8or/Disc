@@ -105,6 +105,40 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+// Without this, launching Disc while it's already running doesn't do
+// nothing so much as it does something confusing: a second full process
+// tree (Vite + Electron) spins up and immediately collides with the first
+// over port 5173, and depending on timing that can either silently fail
+// or leave stray processes behind — repeated launches this way is
+// genuinely how a machine ends up with a pile of stuck node/electron
+// processes and a Desktop shortcut that looks like it's doing nothing.
+// requestSingleInstanceLock() is the standard Electron fix: a second
+// launch attempt hands off to the first instance (which just focuses its
+// window, see the "second-instance" listener below) and quits
+// immediately instead of trying to run alongside it.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+// Windows identifies running apps for taskbar pinning/grouping/
+// notifications by this id, not by window title or icon — without it,
+// every Electron app running from the same generic node_modules/electron/
+// dist/electron.exe (true for any dev-mode Electron app, not just this
+// one) is indistinguishable to Windows, which is very likely why pinning
+// straight from the running taskbar button falls back to Electron's own
+// generic icon regardless of what icon the BrowserWindow itself was given.
+// Deliberately its own id, distinct from package.json's build.appId
+// ("com.disc.app") — that id is what a real packaged install registers
+// with Windows (Start Menu entry, Programs-and-Features entry, icon), and
+// a dev-mode instance squatting on the same id can end up with a blank/
+// generic taskbar icon if that packaged install is ever removed while
+// Windows still has this id cached against it. A distinct id sidesteps
+// that regardless of what is or isn't installed.
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.disc.app.dev");
+}
+
 let mainWindow = null;
 let pomodoroWindow = null; // the standalone floating Pomodoro widget — see createPomodoroWindow
 let normalBounds = null; // remembered so we can restore after compact mode
@@ -410,7 +444,23 @@ function createWindow() {
     // instead of blending with it (shows up as a real blurred backdrop
     // with the entire Disc UI missing).
     backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
-    title: "Disc",
+    // Deliberately not just "Disc" — launch-disc.vbs uses AppActivate to
+    // detect whether the app is already running before deciding to launch
+    // it, and AppActivate does a case-insensitive *prefix* match against
+    // every open window's title. A plain "Disc" title can match something
+    // else entirely (a File Explorer window for a folder literally named
+    // "disc", say), which AppActivate happily "activates" (brings to
+    // front) instead of ever starting the app — the launcher silently
+    // does nothing. This longer, more specific title is unlikely to
+    // prefix-match anything else.
+    title: "Disc — Music Library",
+    // Without this, dev mode (`electron .`, not a packaged build) shows
+    // Electron's own generic default icon in the taskbar instead of
+    // Disc's — a packaged build gets this for free from the .exe's own
+    // embedded icon resource (see package.json's build.win config), but
+    // that only applies once actually built; running from source needs
+    // it set explicitly.
+    icon: path.join(__dirname, "assets", "disc-icon.ico"),
     frame: false,
     ...(useAcrylic ? { backgroundMaterial: "acrylic", transparent: true } : {}),
     webPreferences: {
@@ -435,12 +485,27 @@ function createWindow() {
     },
   });
 
+  // Belt-and-suspenders alongside the `icon:` constructor option above —
+  // harmless, and keeps the window's icon explicitly set on the live
+  // native handle rather than relying solely on constructor-time state.
+  mainWindow.setIcon(nativeImage.createFromPath(path.join(__dirname, "assets", "disc-icon.ico")));
+
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  // Electron syncs the window title to the page's own <title> on every
+  // navigation/reload by default, which would silently undo the title set
+  // above (index.html's <title> is just "Disc") — launch-disc.vbs depends
+  // on the window title staying exactly "Disc — Music Library" to reliably
+  // detect an already-running instance (see comment there), so that has to
+  // win over whatever the page sets.
+  mainWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+  });
 
   // "Maximized" no longer means real OS-level win.maximize() at all (see
   // disc:window-toggle-maximize below for why) — these two just keep
@@ -1074,6 +1139,7 @@ function createPomodoroWindow() {
     show: false, // shown (and raised) on ready-to-show below
     backgroundColor: "#1b1b1f",
     title: "Disc — Pomodoro",
+    icon: path.join(__dirname, "assets", "disc-icon.ico"),
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -1105,7 +1171,18 @@ function createPomodoroWindow() {
   });
 }
 
+// The losing instance already called app.quit() above — this just makes
+// sure it never gets as far as opening a second window in the meantime.
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
+
   // The URL is disc-media://play/<encoded absolute file path>. "play" as
   // the host is arbitrary (custom schemes need one) — everything that
   // matters is in the path, which is exactly the file path run through

@@ -7,7 +7,7 @@
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n VITE,ELECTRON -c blue,green \"vite\" \"npm:dev:electron\"",
+    "dev": "concurrently --kill-others -n VITE,ELECTRON -c blue,green \"vite\" \"npm:dev:electron\"",
     "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
     "build": "vite build",
     "preview": "vite preview",
