@@ -27,6 +27,16 @@ export const PROFILE_KEYS = [
   "disc.volume",
 ];
 
+// Deliberately NOT in PROFILE_KEYS: "disc.studioSyncEnabled",
+// "disc.sync.seq", "disc.sync.backfilled". These identify *this
+// machine's* relationship to the shared event log (its own sequence
+// counter, whether it's already backfilled), not profile-portable data —
+// resetting disc.sync.seq on a Default-profile reset would break event
+// ordering/dedup against every device's log, and resetting
+// disc.sync.backfilled would re-run the one-time backfill and could
+// re-emit events for data that was only ever local to a different
+// profile on this same machine.
+
 // Reads every profile-relevant key currently in localStorage into a
 // plain object — missing keys are simply omitted rather than included
 // as null/undefined, so applying this later doesn't wipe out something

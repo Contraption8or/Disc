@@ -20,6 +20,10 @@ import PomodoroPanel from "./components/PomodoroPanel.jsx";
 import ImagePanel from "./components/ImagePanel.jsx";
 import { PomodoroProvider } from "./context/PomodoroContext.jsx";
 import { DiscContext } from "./context/DiscContext.jsx";
+import { getTrackKey } from "./sync/trackKey.js";
+import { getRelativeFolderPath } from "./sync/folderPath.js";
+import { logSyncEvent, buildSyncEvent, writeSyncEventsNow } from "./sync/eventLog.js";
+import { mergeEvents } from "./sync/mergeEvents.js";
 import { THEMES, DEFAULT_THEME } from "./themes/themes.js";
 import { applyCustomThemeVars, clearCustomThemeVars } from "./themes/customThemeEngine.js";
 import { loadAppearance, saveAppearance } from "./appearance/appearanceStorage.js";
@@ -325,6 +329,277 @@ export default function App() {
   const musicFolderPathRef = useRef(musicFolderPath);
   musicFolderPathRef.current = musicFolderPath;
 
+  // --- Studio Sync: device identity + event log (Phase 2, write-only —
+  // see docs/collab-sync-scope.md) ---------------------------------------
+  const [deviceIdentity, setDeviceIdentity] = useState(null); // { id, name } | null while loading
+  const deviceIdRef = useRef(null);
+  const customFoldersRef = useRef(customFolders);
+  customFoldersRef.current = customFolders;
+  const trackTagsRef = useRef(trackTags);
+  trackTagsRef.current = trackTags;
+  const collectionsRef = useRef(collections);
+  collectionsRef.current = collections;
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
+  const trackNotesRef = useRef(trackNotes);
+  trackNotesRef.current = trackNotes;
+
+  useEffect(() => {
+    window.disc?.getDeviceIdentity().then((identity) => {
+      deviceIdRef.current = identity?.id ?? null;
+      setDeviceIdentity(identity ?? null);
+    });
+  }, []);
+
+  const handleSetDeviceName = useCallback((name) => {
+    window.disc?.setDeviceName(name).then((identity) => {
+      deviceIdRef.current = identity?.id ?? null;
+      setDeviceIdentity(identity ?? null);
+    });
+  }, []);
+
+  // Every call site below already has trackId (a file path) in hand from
+  // its own arguments — this just wraps getTrackKey with the current
+  // folder context so call sites don't each have to thread it through.
+  const trackKeyFor = useCallback(
+    (trackId) =>
+      getTrackKey(trackId, {
+        musicFolderPath: musicFolderPathRef.current,
+        customFolders: customFoldersRef.current,
+      }),
+    []
+  );
+
+  // null means "outside the shared root, can't be safely linked on
+  // another machine" — see src/sync/folderPath.js.
+  const folderRelativePathFor = useCallback(
+    (folderPath) => getRelativeFolderPath(folderPath, musicFolderPathRef.current),
+    []
+  );
+
+  const logEvent = useCallback((type, payload) => {
+    logSyncEvent(
+      { musicFolderPath: musicFolderPathRef.current, deviceId: deviceIdRef.current },
+      type,
+      payload
+    );
+  }, []);
+
+  // --- Studio Sync: read + merge path (Phase 3) --------------------------
+  const folderGroupsRef = useRef(folderGroups);
+  folderGroupsRef.current = folderGroups;
+
+  const [studioSyncEnabled, setStudioSyncEnabled] = useState(
+    () => localStorage.getItem("disc.studioSyncEnabled") === "true"
+  );
+  useEffect(() => {
+    localStorage.setItem("disc.studioSyncEnabled", String(studioSyncEnabled));
+  }, [studioSyncEnabled]);
+
+  const [syncStatus, setSyncStatus] = useState({
+    lastSyncedAt: null,
+    deviceNames: {},
+    deviceCount: 0,
+  });
+
+  // Publishes this device's name into the shared folder so other machines
+  // can show it instead of a raw id (see disc:write-device-meta).
+  useEffect(() => {
+    if (!studioSyncEnabled || !musicFolderPath || !deviceIdentity?.id) return;
+    window.disc?.writeDeviceMeta(musicFolderPath, deviceIdentity.id, deviceIdentity.name);
+  }, [studioSyncEnabled, musicFolderPath, deviceIdentity]);
+
+  // Reconciles freshly-merged folders/groups against current local state.
+  // Fields Phase 3 actually syncs (name, color, link state) come from the
+  // merge; fields it deliberately doesn't (position, group/section
+  // membership, collapsed state — see the "not yet synced" list in
+  // docs/collab-sync-scope.md) are preserved from whatever's already
+  // here, so a local drag-reorder can't be silently reverted by some
+  // unrelated remote change re-triggering a merge. A folder/group never
+  // seen locally before uses the merge's own placement, since there's no
+  // local position to preserve yet.
+  const applyMergedFolders = useCallback((mergedFolders, mergedGroups) => {
+    const mergedFolderById = new Map(mergedFolders.map((f) => [f.id, f]));
+    const seenFolderIds = new Set();
+    const reconciledFolders = [];
+    customFoldersRef.current.forEach((prev) => {
+      const merged = mergedFolderById.get(prev.id);
+      if (!merged) return; // deleted, locally or remotely
+      seenFolderIds.add(prev.id);
+      reconciledFolders.push({
+        ...prev,
+        name: merged.name,
+        color: merged.color,
+        folderPath: merged.folderPath,
+      });
+    });
+    mergedFolders.forEach((f) => {
+      if (!seenFolderIds.has(f.id)) reconciledFolders.push(f);
+    });
+    setCustomFolders(reconciledFolders);
+
+    const mergedGroupById = new Map(mergedGroups.map((g) => [g.id, g]));
+    const seenGroupIds = new Set();
+    const reconciledGroups = [];
+    folderGroupsRef.current.forEach((prev) => {
+      // "primary" is built-in — it never gets a folderGroup.create event,
+      // so it's never present in a merge result on its own account.
+      if (prev.id === "primary") {
+        reconciledGroups.push(mergedGroupById.get("primary") ?? prev);
+        seenGroupIds.add("primary");
+        return;
+      }
+      const merged = mergedGroupById.get(prev.id);
+      if (!merged) {
+        dockApiRef.current?.getPanel(`folder-group-${prev.id}`)?.api?.close?.();
+        return;
+      }
+      seenGroupIds.add(prev.id);
+      reconciledGroups.push({ ...prev, name: merged.name });
+    });
+    mergedGroups.forEach((g) => {
+      if (seenGroupIds.has(g.id)) return;
+      reconciledGroups.push(g);
+      // A group that showed up via merge and wasn't here before needs an
+      // actual panel to be usable — same call handleCreateFolderGroup
+      // makes for a locally-created one.
+      dockApiRef.current?.addPanel({
+        id: `folder-group-${g.id}`,
+        component: "folderGroup",
+        title: g.name,
+        params: { groupId: g.id },
+        position: { referencePanel: "library", direction: "left" },
+      });
+    });
+    setFolderGroups(reconciledGroups);
+  }, []);
+
+  // Reads every device's event log, replays it, and applies the result —
+  // safe to call as often as needed (idempotent), including right after
+  // this device's own mutations, since replaying the same events always
+  // produces the same state.
+  const runMerge = useCallback(async () => {
+    const rootDir = musicFolderPathRef.current;
+    if (!rootDir || !window.disc) return;
+    const { events, deviceNames } = await window.disc.readSyncState(rootDir);
+    const result = mergeEvents(events, {
+      musicFolderPath: rootDir,
+      customFolders: customFoldersRef.current,
+    });
+    setTags(result.tags);
+    setTrackTags(result.trackTags);
+    setCollections(result.collections);
+    setTrackNotes(result.trackNotes);
+    applyMergedFolders(result.folders, result.folderGroups);
+    setSyncStatus({
+      lastSyncedAt: Date.now(),
+      deviceNames,
+      deviceCount: new Set(events.map((e) => e.device)).size,
+    });
+  }, [applyMergedFolders]);
+
+  // The event log only ever captures *new* mutations from whenever
+  // Studio Sync first shipped — anything that already existed locally
+  // before that has no corresponding create/assign event. Since a merge
+  // fully rebuilds shared state from the event log alone, enabling Studio
+  // Sync without this step would silently wipe out any pre-existing
+  // tags/collections/notes/folders that predate the log (this actually
+  // happened once, during development — see the "Devices seen" recovery
+  // note in docs/collab-sync-scope.md). Runs once per device, tracked by
+  // a local-only flag (not synced); a later enable, or a merge triggered
+  // afterward, doesn't repeat it.
+  const BACKFILL_KEY = "disc.sync.backfilled";
+  const backfillLocalStateIfNeeded = useCallback(async () => {
+    if (localStorage.getItem(BACKFILL_KEY) === "true") return;
+    const deviceId = deviceIdRef.current;
+    const rootDir = musicFolderPathRef.current;
+    if (!deviceId || !rootDir) return;
+
+    const events = [];
+    const add = (type, payload) => events.push(buildSyncEvent(deviceId, type, payload));
+
+    tagsRef.current.forEach((tag) =>
+      add("tag.create", { tagId: tag.id, name: tag.name, color: tag.color })
+    );
+
+    Object.entries(trackTagsRef.current).forEach(([trackId, tagIds]) => {
+      const trackKey = trackKeyFor(trackId);
+      if (!trackKey) return;
+      tagIds.forEach((tagId) => add("tag.assign", { trackKey, tagId }));
+    });
+
+    collectionsRef.current.forEach((c) => {
+      add("collection.create", { collectionId: c.id, name: c.name, color: c.color ?? null });
+      (c.trackIds || []).forEach((trackId) => {
+        const trackKey = trackKeyFor(trackId);
+        if (trackKey) add("collection.addTrack", { collectionId: c.id, trackKey });
+      });
+    });
+
+    Object.entries(trackNotesRef.current).forEach(([trackId, text]) => {
+      const trackKey = trackKeyFor(trackId);
+      if (trackKey) add("note.set", { trackKey, text });
+    });
+
+    folderGroupsRef.current.forEach((g) => {
+      if (g.id === "primary") return; // built-in, never has its own create event
+      add("folderGroup.create", { groupId: g.id, name: g.name });
+    });
+
+    customFoldersRef.current.forEach((f) => {
+      add("folder.create", {
+        folderId: f.id,
+        kind: f.type === "divider" ? "section" : "folder",
+        name: f.name,
+        color: f.color ?? null,
+        groupId: f.groupId,
+        sectionId: f.sectionId ?? null,
+      });
+      if (f.folderPath) {
+        const relativePath = folderRelativePathFor(f.folderPath);
+        if (relativePath !== null) add("folder.link", { folderId: f.id, relativePath });
+      }
+    });
+
+    if (events.length > 0) {
+      await writeSyncEventsNow(rootDir, deviceId, events);
+    }
+    localStorage.setItem(BACKFILL_KEY, "true");
+  }, [trackKeyFor, folderRelativePathFor]);
+
+  // Backfills once (a no-op after the first time), then merges — on
+  // enabling Studio Sync, and whenever the shared folder itself changes
+  // while it's on, to pick up anything that happened while this device
+  // was off/closed.
+  //
+  // Waits on deviceIdentity specifically (not just studioSyncEnabled +
+  // musicFolderPath) — deviceIdentity loads via an async IPC call in a
+  // separate effect, so on a cold start with Studio Sync already enabled
+  // from a previous session, this effect would otherwise fire before that
+  // IPC call resolves. backfillLocalStateIfNeeded silently no-ops without
+  // a device id (correctly — it can't attribute events to a device it
+  // doesn't have), but runMerge would still run right after it via the
+  // .then(), applying whatever's in the shared log — including nothing
+  // at all, on a device's first-ever enable, before backfill ever gets a
+  // real chance to run. That's exactly the class of bug the backfill step
+  // exists to prevent (see the incident in docs/collab-sync-scope.md
+  // §7.5) — just reached via a startup race instead of a first-run one.
+  useEffect(() => {
+    if (!studioSyncEnabled || !deviceIdentity?.id) return;
+    backfillLocalStateIfNeeded().then(runMerge);
+  }, [studioSyncEnabled, musicFolderPath, deviceIdentity, runMerge, backfillLocalStateIfNeeded]);
+
+  // Live updates: the main music folder is already watched recursively
+  // for track changes (see the "main" rescan effect above) — that same
+  // watch fires for anything written under .disc-sync too, so this reuses
+  // it rather than adding a second recursive watcher over the same tree.
+  useEffect(() => {
+    if (!window.disc || !studioSyncEnabled) return;
+    return window.disc.onFolderChanged((key) => {
+      if (key === "main") runMerge();
+    });
+  }, [studioSyncEnabled, runMerge]);
+
   const applyThemeById = useCallback((id) => {
     const custom = loadCustomThemes().find((t) => t.id === id);
     if (custom) {
@@ -599,7 +874,9 @@ export default function App() {
       }
       return { ...prev, [trackId]: note };
     });
-  }, []);
+    const trackKey = trackKeyFor(trackId);
+    if (trackKey) logEvent("note.set", { trackKey, text: note });
+  }, [logEvent, trackKeyFor]);
 
 
   // Adds a new marked section for a track — startFraction/endFraction are
@@ -631,30 +908,39 @@ export default function App() {
   // --- Collections (virtual groupings, independent of any real folder) --
   const handleCreateCollection = useCallback((name) => {
     const id = `collection-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const resolvedName = name || "New Collection";
     setCollections((prev) => [
       ...prev,
-      { id, name: name || "New Collection", color: null, trackIds: [] },
+      { id, name: resolvedName, color: null, trackIds: [] },
     ]);
+    logEvent("collection.create", { collectionId: id, name: resolvedName, color: null });
     return id;
-  }, []);
+  }, [logEvent]);
 
   const handleRenameCollection = useCallback((id, name) => {
+    const resolvedName = name.trim() || "New Collection";
     setCollections((prev) =>
       prev.map((c) =>
-        c.id === id ? { ...c, name: name.trim() || "New Collection" } : c
+        c.id === id ? { ...c, name: resolvedName } : c
       )
     );
-  }, []);
+    logEvent("collection.rename", { collectionId: id, name: resolvedName });
+  }, [logEvent]);
 
   const handleDeleteCollection = useCallback((id) => {
     setCollections((prev) => prev.filter((c) => c.id !== id));
-  }, []);
+    logEvent("collection.delete", { collectionId: id });
+  }, [logEvent]);
 
   const handleSetCollectionColor = useCallback((id, color) => {
     setCollections((prev) => prev.map((c) => (c.id === id ? { ...c, color } : c)));
-  }, []);
+    logEvent("collection.recolor", { collectionId: id, color });
+  }, [logEvent]);
 
   const handleAddTracksToCollection = useCallback((trackIds, collectionId) => {
+    const collection = collectionsRef.current.find((c) => c.id === collectionId);
+    const already = new Set(collection?.trackIds || []);
+    const changedTrackIds = trackIds.filter((id) => !already.has(id));
     setCollections((prev) =>
       prev.map((c) => {
         if (c.id !== collectionId) return c;
@@ -663,7 +949,11 @@ export default function App() {
         return { ...c, trackIds: Array.from(existing) };
       })
     );
-  }, []);
+    changedTrackIds.forEach((trackId) => {
+      const trackKey = trackKeyFor(trackId);
+      if (trackKey) logEvent("collection.addTrack", { collectionId, trackKey });
+    });
+  }, [logEvent, trackKeyFor]);
 
   const handleRemoveTrackFromCollection = useCallback((trackId, collectionId) => {
     setCollections((prev) =>
@@ -673,7 +963,9 @@ export default function App() {
           : c
       )
     );
-  }, []);
+    const trackKey = trackKeyFor(trackId);
+    if (trackKey) logEvent("collection.removeTrack", { collectionId, trackKey });
+  }, [logEvent, trackKeyFor]);
 
   // Rebinding a key to one action automatically clears it from whatever
   // action was using it, so two actions can never silently share a key.
@@ -699,8 +991,9 @@ export default function App() {
     if (!trimmed) return null;
     const id = `tag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setTags((prev) => [...prev, { id, name: trimmed, color }]);
+    logEvent("tag.create", { tagId: id, name: trimmed, color });
     return id;
-  }, []);
+  }, [logEvent]);
 
   // Soft delete — same pattern as handleDeleteFolderGroup above: removed
   // immediately, but kept around for a few seconds so an accidental
@@ -723,9 +1016,16 @@ export default function App() {
       });
       setPendingDeletedTag({ tag, trackIds });
       clearTimeout(undoTagTimeoutRef.current);
-      undoTagTimeoutRef.current = setTimeout(() => setPendingDeletedTag(null), 8000);
+      // Only actually logged once the undo window expires, not here on the
+      // click — an event synced to another machine can't be un-sent, so
+      // logging immediately would mean an Undo on this machine couldn't
+      // un-delete it on Peter's.
+      undoTagTimeoutRef.current = setTimeout(() => {
+        logEvent("tag.delete", { tagId });
+        setPendingDeletedTag(null);
+      }, 8000);
     },
-    [tags, trackTags]
+    [tags, trackTags, logEvent]
   );
 
   const handleUndoDeleteTag = useCallback(() => {
@@ -748,11 +1048,13 @@ export default function App() {
     const trimmed = name.trim();
     if (!trimmed) return;
     setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, name: trimmed } : t)));
-  }, []);
+    logEvent("tag.rename", { tagId, name: trimmed });
+  }, [logEvent]);
 
   const handleRecolorTag = useCallback((tagId, color) => {
     setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, color } : t)));
-  }, []);
+    logEvent("tag.recolor", { tagId, color });
+  }, [logEvent]);
 
   // Reassigns every track carrying `fromId` over to `intoId` (tracks that
   // already had both just end up with one), then removes `fromId`
@@ -773,7 +1075,8 @@ export default function App() {
       return next;
     });
     setTags((prev) => prev.filter((t) => t.id !== fromId));
-  }, []);
+    logEvent("tag.merge", { fromTagId: fromId, intoTagId: intoId });
+  }, [logEvent]);
 
   // Mutually exclusive with the health-dashboard filters (both drive the
   // same "show only these tracks, spanning the whole library" library-view
@@ -790,6 +1093,7 @@ export default function App() {
   }, []);
 
   const handleToggleTrackTag = useCallback((trackId, tagId) => {
+    const willAssign = !(trackTagsRef.current[trackId] || []).includes(tagId);
     setTrackTags((prev) => {
       const current = prev[trackId] || [];
       const next = current.includes(tagId)
@@ -797,11 +1101,16 @@ export default function App() {
         : [...current, tagId];
       return { ...prev, [trackId]: next };
     });
-  }, []);
+    const trackKey = trackKeyFor(trackId);
+    if (trackKey) logEvent(willAssign ? "tag.assign" : "tag.unassign", { trackKey, tagId });
+  }, [logEvent, trackKeyFor]);
 
   // Explicit add (not toggle) across many tracks at once — used by the
   // multi-select batch "Add Tag" action.
   const handleAssignTagToTracks = useCallback((trackIds, tagId) => {
+    const changedTrackIds = trackIds.filter(
+      (trackId) => !(trackTagsRef.current[trackId] || []).includes(tagId)
+    );
     setTrackTags((prev) => {
       const next = { ...prev };
       trackIds.forEach((trackId) => {
@@ -810,7 +1119,11 @@ export default function App() {
       });
       return next;
     });
-  }, []);
+    changedTrackIds.forEach((trackId) => {
+      const trackKey = trackKeyFor(trackId);
+      if (trackKey) logEvent("tag.assign", { trackKey, tagId });
+    });
+  }, [logEvent, trackKeyFor]);
 
   // Files dragged in from the OS land here, get copied into the target
   // folder (the active custom folder's directory if one's linked and
@@ -1360,6 +1673,7 @@ export default function App() {
         ...prev,
         { id, type: "divider", name: "New Section", groupId, collapsed: false, sectionId: null },
       ]);
+      logEvent("folder.create", { folderId: id, kind: "section", name: "New Section", groupId, sectionId: null });
     } else {
       setCustomFolders((prev) => [
         ...prev,
@@ -1373,9 +1687,10 @@ export default function App() {
           sectionId: null,
         },
       ]);
+      logEvent("folder.create", { folderId: id, kind: "folder", name: "New Folder", color: null, groupId, sectionId: null });
     }
     return id;
-  }, []);
+  }, [logEvent]);
 
   // Dragging a real folder in from Explorer creates AND links it in one
   // step — skips the usual "create empty folder, then browse for a
@@ -1403,15 +1718,27 @@ export default function App() {
         sectionId: sectionId ?? null,
       },
     ]);
-  }, []);
+    logEvent("folder.create", {
+      folderId: id,
+      kind: "folder",
+      name,
+      color: null,
+      groupId,
+      sectionId: sectionId ?? null,
+    });
+    const relativePath = folderRelativePathFor(folderPath);
+    if (relativePath !== null) logEvent("folder.link", { folderId: id, relativePath });
+  }, [logEvent, folderRelativePathFor]);
 
   const handleRenameFolder = useCallback((id, name) => {
+    const trimmed = name.trim() || "New Folder";
     setCustomFolders((prev) =>
       prev.map((f) =>
-        f.id === id ? { ...f, name: name.trim() || "New Folder" } : f
+        f.id === id ? { ...f, name: trimmed } : f
       )
     );
-  }, []);
+    logEvent("folder.rename", { folderId: id, name: trimmed });
+  }, [logEvent]);
 
   // Deleting a Section un-nests whatever's inside it (back to top-level in
   // the same group) rather than deleting those folders too — a Section is
@@ -1423,7 +1750,8 @@ export default function App() {
         .filter((f) => f.id !== id)
         .map((f) => (f.sectionId === id ? { ...f, sectionId: null } : f))
     );
-  }, []);
+    logEvent("folder.delete", { folderId: id });
+  }, [logEvent]);
 
   const handleToggleSectionCollapsed = useCallback((id) => {
     setCustomFolders((prev) =>
@@ -1461,7 +1789,9 @@ export default function App() {
     setCustomFolders((prev) =>
       prev.map((f) => (f.id === id ? { ...f, folderPath: chosen } : f))
     );
-  }, []);
+    const relativePath = folderRelativePathFor(chosen);
+    if (relativePath !== null) logEvent("folder.link", { folderId: id, relativePath });
+  }, [logEvent, folderRelativePathFor]);
 
   // The three things the OGG-link prompt can end in:
   const handleLinkWithoutConverting = useCallback(() => {
@@ -1471,7 +1801,9 @@ export default function App() {
       prev.map((f) => (f.id === folderId ? { ...f, folderPath } : f))
     );
     setPendingOggLink(null);
-  }, [pendingOggLink]);
+    const relativePath = folderRelativePathFor(folderPath);
+    if (relativePath !== null) logEvent("folder.link", { folderId, relativePath });
+  }, [pendingOggLink, logEvent, folderRelativePathFor]);
 
   const handleCancelOggLinkPrompt = useCallback(() => {
     setPendingOggLink(null);
@@ -1486,7 +1818,9 @@ export default function App() {
     setCustomFolders((prev) =>
       prev.map((f) => (f.id === folderId ? { ...f, folderPath } : f))
     );
-  }, [pendingOggLink]);
+    const relativePath = folderRelativePathFor(folderPath);
+    if (relativePath !== null) logEvent("folder.link", { folderId, relativePath });
+  }, [pendingOggLink, logEvent, folderRelativePathFor]);
 
   // Cancelling mid-conversion un-links the folder entirely — not just a
   // pause. Converting was an explicit, potentially slow choice (dozens or
@@ -1500,19 +1834,22 @@ export default function App() {
       prev.map((f) => (f.id === folderId ? { ...f, folderPath: null } : f))
     );
     setPendingOggLink(null);
-  }, [pendingOggLink]);
+    logEvent("folder.unlink", { folderId });
+  }, [pendingOggLink, logEvent]);
 
   const handleUnlinkFolderDirectory = useCallback((id) => {
     setCustomFolders((prev) =>
       prev.map((f) => (f.id === id ? { ...f, folderPath: null } : f))
     );
-  }, []);
+    logEvent("folder.unlink", { folderId: id });
+  }, [logEvent]);
 
   const handleSetFolderColor = useCallback((id, color) => {
     setCustomFolders((prev) =>
       prev.map((f) => (f.id === id ? { ...f, color } : f))
     );
-  }, []);
+    logEvent("folder.recolor", { folderId: id, color });
+  }, [logEvent]);
 
   // Drag-to-reorder within a group, or drag between two different groups'
   // panels entirely — dropping one item onto another places the dragged
@@ -1668,8 +2005,9 @@ export default function App() {
       params: { groupId: id },
       position: { referencePanel: "library", direction: "left" },
     });
+    logEvent("folderGroup.create", { groupId: id, name: group.name });
     return id;
-  }, []);
+  }, [logEvent]);
 
   const handleRenameFolderGroup = useCallback((groupId, name) => {
     const trimmed = name.trim() || "New Group";
@@ -1680,11 +2018,17 @@ export default function App() {
     // title updates, the in-panel header (driven by the same state) is
     // still always correct regardless.
     dockApiRef.current?.getPanel(`folder-group-${groupId}`)?.api?.setTitle?.(trimmed);
-  }, []);
+    logEvent("folderGroup.rename", { groupId, name: trimmed });
+  }, [logEvent]);
 
   // Soft delete: the group and its folders are removed immediately (and
   // the panel closes), but kept around for a few seconds so the action
-  // can be undone before it's final.
+  // can be undone before it's final. The sync events (one folderGroup.delete
+  // plus one folder.delete per folder it takes with it — a receiving device
+  // needs its own tombstone per folder, since this isn't a Section's
+  // un-nesting where the cascade can be inferred from one event alone) are
+  // only actually logged once the undo window expires, same reasoning as
+  // handleDeleteTag: an event synced to another machine can't be un-sent.
   const handleDeleteFolderGroup = useCallback(
     (groupId) => {
       const group = folderGroups.find((g) => g.id === groupId);
@@ -1695,12 +2039,16 @@ export default function App() {
       setCustomFolders((prev) => prev.filter((f) => f.groupId !== groupId));
       setPendingDeletedGroup({ group, folders: removedFolders });
       clearTimeout(undoGroupTimeoutRef.current);
-      undoGroupTimeoutRef.current = setTimeout(() => setPendingDeletedGroup(null), 8000);
+      undoGroupTimeoutRef.current = setTimeout(() => {
+        logEvent("folderGroup.delete", { groupId });
+        removedFolders.forEach((f) => logEvent("folder.delete", { folderId: f.id }));
+        setPendingDeletedGroup(null);
+      }, 8000);
 
       const panelId = `folder-group-${groupId}`;
       dockApiRef.current?.getPanel(panelId)?.api?.close?.();
     },
-    [folderGroups, customFolders]
+    [folderGroups, customFolders, logEvent]
   );
 
   const handleUndoDeleteFolderGroup = useCallback(() => {
@@ -1812,6 +2160,12 @@ export default function App() {
       onSetCollectionColor: handleSetCollectionColor,
       onAddTracksToCollection: handleAddTracksToCollection,
       onRemoveTrackFromCollection: handleRemoveTrackFromCollection,
+      deviceIdentity,
+      onSetDeviceName: handleSetDeviceName,
+      studioSyncEnabled,
+      onSetStudioSyncEnabled: setStudioSyncEnabled,
+      syncStatus,
+      onSyncNow: runMerge,
       shortcuts,
       onSetShortcut: handleSetShortcut,
       onResetShortcuts: handleResetShortcuts,
@@ -1915,6 +2269,11 @@ export default function App() {
       handleSetCollectionColor,
       handleAddTracksToCollection,
       handleRemoveTrackFromCollection,
+      deviceIdentity,
+      handleSetDeviceName,
+      studioSyncEnabled,
+      syncStatus,
+      runMerge,
       shortcuts,
       handleSetShortcut,
       handleResetShortcuts,
