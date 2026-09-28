@@ -1676,6 +1676,71 @@ ipcMain.handle("disc:write-converted-mp3", async (_event, { destFolder, fileName
   }
 });
 
+// Classifies a file by its actual header bytes rather than trusting its
+// extension — a downloader/converter somewhere upstream can save, say,
+// AAC/M4A content with a .mp3 extension (this bit a real track once: a
+// file played fine inside Disc, since Chromium's Web Audio decodes AAC
+// regardless of extension, but DaVinci Resolve's importer inspected the
+// real container and silently refused to recognize it on drag-and-drop).
+// Only distinguishes what "Repair Track" cares about — genuine MP3 vs.
+// the handful of other containers Disc already knows how to decode.
+function sniffAudioFormat(buffer) {
+  if (buffer.length >= 3 && buffer.toString("latin1", 0, 3) === "ID3") return "mp3";
+  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return "mp3";
+  if (buffer.length >= 8 && buffer.toString("latin1", 4, 8) === "ftyp") return "mp4";
+  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "OggS") return "ogg";
+  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "fLaC") return "flac";
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("latin1", 0, 4) === "RIFF" &&
+    buffer.toString("latin1", 8, 12) === "WAVE"
+  ) {
+    return "wav";
+  }
+  return "unknown";
+}
+
+// "Repair Track" (right-click a track) only actually applies to files
+// claiming to be .mp3 — that's the concrete case this was built for, and
+// generalizing to "repair" a mislabeled .wav/.flac/etc. would mean
+// guessing what the *correct* fix even is, which isn't something this
+// tries to do. Reports "healthy" for anything else so the UI can say
+// there's nothing to repair rather than claiming something's wrong.
+ipcMain.handle("disc:diagnose-track", async (_event, filePath) => {
+  try {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const fd = await fs.open(filePath, "r");
+    const buffer = Buffer.alloc(16);
+    await fd.read(buffer, 0, 16, 0);
+    await fd.close();
+    const actualFormat = sniffAudioFormat(buffer);
+    const healthy = ext !== "mp3" || actualFormat === "mp3";
+    return { healthy, claimedExtension: ext, actualFormat };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Overwrites a track's file with newly re-encoded bytes at the *same*
+// path — used by Repair Track. Backs up the original first (never
+// destructive), and finds a non-colliding backup name rather than
+// clobbering a previous repair's backup if this somehow runs twice.
+ipcMain.handle("disc:repair-track-file", async (_event, { filePath, bytes }) => {
+  try {
+    let backupPath = `${filePath}.original.bak`;
+    let counter = 1;
+    while (existsSync(backupPath)) {
+      backupPath = `${filePath}.original-${counter}.bak`;
+      counter += 1;
+    }
+    await fs.copyFile(filePath, backupPath);
+    await fs.writeFile(filePath, Buffer.from(bytes));
+    return { success: true, backupPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // Writes a trimmed marked-section clip into the source track's own
 // .disc-sections folder (created on first use), for dragging just that
 // section into Premiere. Unlike disc:write-converted-mp3 (which writes

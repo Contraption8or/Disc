@@ -4,7 +4,7 @@ import Icon from "./Icon.jsx";
 import "./TrackContextMenu.css";
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT = 250;
+const MENU_HEIGHT = 284;
 
 export default function TrackContextMenu({
   x,
@@ -16,6 +16,7 @@ export default function TrackContextMenu({
   inCollectionName,
   onRemoveFromCollection,
   onRename,
+  onRepair,
   onDelete,
   deleteCount = 1,
   onClose,
@@ -60,6 +61,19 @@ export default function TrackContextMenu({
         }}
       >
         Rename
+      </button>
+      <button
+        className="track-context-menu__option"
+        disabled={!onRepair}
+        title={
+          !onRepair ? "Can't repair — this file isn't reachable right now" : undefined
+        }
+        onClick={() => {
+          onRepair?.();
+          onClose();
+        }}
+      >
+        Repair Track…
       </button>
       <button
         className="track-context-menu__option"

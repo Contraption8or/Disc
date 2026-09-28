@@ -40,6 +40,7 @@ function TrackRow({
     onSelectTrack,
     onDeleteTrack,
     onRenameTrackFile,
+    onRepairTrack,
     activeFolderId,
     collections,
     onAddTracksToCollection,
@@ -73,6 +74,21 @@ function TrackRow({
     if (!trimmed || trimmed === stripExtension(track.fileName)) return;
     onRenameTrackFile(track, trimmed);
   }
+
+  // Repair Track rewrites a file's bytes in place (same path, same id) —
+  // the module-level waveform cache gets invalidated for it, but this
+  // row's own already-decoded waveformData wouldn't otherwise know to
+  // refresh. sizeBytes changing is a reliable, already-available signal
+  // that the file on disk isn't the one this row last decoded (the
+  // folder watcher picks up the rewrite and rescans on its own, which is
+  // what updates track.sizeBytes here).
+  const prevSizeBytesRef = useRef(track.sizeBytes);
+  useEffect(() => {
+    if (prevSizeBytesRef.current !== track.sizeBytes) {
+      prevSizeBytesRef.current = track.sizeBytes;
+      setWaveformData(null);
+    }
+  }, [track.sizeBytes]);
 
   // Lazily decode the real waveform once this row scrolls near the viewport,
   // instead of decoding every track in the library up front. Video clips
@@ -389,6 +405,7 @@ function TrackRow({
             onRemoveTrackFromCollection(track.id, activeFolderId)
           }
           onRename={isMissing ? null : () => setIsRenaming(true)}
+          onRepair={isMissing || isVideo ? null : () => onRepairTrack(track.filePath)}
           deleteCount={isMultiSelected && selectionCount > 1 ? selectionCount : 1}
           onDelete={
             isMultiSelected && selectionCount > 1

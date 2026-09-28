@@ -11,6 +11,7 @@ import CompactView from "./components/CompactView.jsx";
 import ShortcutsModal from "./components/ShortcutsModal.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import LibraryHealthModal from "./components/LibraryHealthModal.jsx";
+import ConfirmModal from "./components/ConfirmModal.jsx";
 import TagManagerModal from "./components/TagManagerModal.jsx";
 import ConvertModal from "./components/ConvertModal.jsx";
 import OggLinkPromptModal from "./components/OggLinkPromptModal.jsx";
@@ -38,9 +39,11 @@ import { loadCollections, saveCollections } from "./collections/collectionStorag
 import { toMediaUrl } from "./utils/paths.js";
 import { loadShortcuts, saveShortcuts, DEFAULT_SHORTCUTS } from "./shortcuts/shortcutStorage.js";
 import { preloadLibrary, getPreloadCandidates } from "./audio/preload.js";
+import { convertToMp3 } from "./audio/audioConverter.js";
 import {
   setMaxConcurrentDecodes,
   DEFAULT_MAX_CONCURRENT_DECODES,
+  invalidateWaveform,
 } from "./audio/waveform.js";
 import "./App.css";
 import "./appearance/appearance.css";
@@ -158,6 +161,16 @@ export default function App() {
   const [showSavedToast, setShowSavedToast] = useState(false);
   const savedToastTimeoutRef = useRef(null);
   const undoGroupTimeoutRef = useRef(null);
+  // Repair Track (right-click a track) — see handleRepairTrack below.
+  const [repairConfirm, setRepairConfirm] = useState(null); // { trackId, diagnosis } | null
+  const [repairProgress, setRepairProgress] = useState(null); // { trackId, fraction } | null
+  const [toastMessage, setToastMessage] = useState(null);
+  const toastTimeoutRef = useRef(null);
+  const showToast = useCallback((message) => {
+    setToastMessage(message);
+    clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 3000);
+  }, []);
   // A just-deleted tag, kept around briefly so it can be undone — see
   // handleDeleteTag/handleUndoDeleteTag below.
   const [pendingDeletedTag, setPendingDeletedTag] = useState(null); // { tag, trackIds } | null
@@ -946,6 +959,70 @@ export default function App() {
     [rescan, customFolders, applyScanResult]
   );
 
+  // Right-click a track → Repair Track: for a file whose actual content
+  // doesn't match its .mp3 extension (a downloader/converter upstream can
+  // save AAC/M4A content with a .mp3 extension — this bit a real track
+  // once, playing fine inside Disc via Web Audio's permissive decoding,
+  // but silently failing to register when dragged into DaVinci Resolve,
+  // which inspects the real container). Diagnoses first — a genuinely
+  // healthy file just gets a "nothing to repair" toast, no confirmation
+  // needed.
+  const REPAIR_FORMAT_LABELS = {
+    mp4: "an M4A/AAC file",
+    ogg: "an Ogg file",
+    flac: "a FLAC file",
+    wav: "a WAV file",
+    unknown: "something Disc doesn't recognize",
+  };
+
+  const handleRepairTrack = useCallback(async (trackId) => {
+    const diagnosis = await window.disc?.diagnoseTrack(trackId);
+    if (!diagnosis || diagnosis.error) {
+      showToast("Couldn't check this file — it may be unreachable.");
+      return;
+    }
+    if (diagnosis.healthy) {
+      showToast("Already a valid MP3 — nothing to repair.");
+      return;
+    }
+    setRepairConfirm({ trackId, diagnosis });
+  }, [showToast]);
+
+  const handleConfirmRepair = useCallback(async () => {
+    if (!repairConfirm) return;
+    const { trackId } = repairConfirm;
+    setRepairConfirm(null);
+    setRepairProgress({ trackId, fraction: 0 });
+    try {
+      const { mp3Bytes } = await convertToMp3(trackId, {
+        onBlockProgress: (fraction) => setRepairProgress({ trackId, fraction }),
+      });
+      const result = await window.disc.repairTrackFile(trackId, mp3Bytes);
+      if (!result?.success) {
+        showToast(`Repair failed: ${result?.error || "unknown error"}`);
+        return;
+      }
+      // Same reasoning as handleRenameTrackFile above — this cache is
+      // keyed by track id (path), which didn't change, so nothing would
+      // otherwise know this track's actual bytes on disk are new.
+      invalidateWaveform(trackId);
+      rescan();
+      customFolders.forEach((folder) => {
+        if (!folder.folderPath) return;
+        window.disc.scanFolder(folder.folderPath).then((found) => {
+          applyScanResult(folder.id, found, (r) =>
+            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: r }))
+          );
+        });
+      });
+      showToast("Repaired — the original is backed up alongside it.");
+    } catch (err) {
+      showToast(`Repair failed: ${err.message}`);
+    } finally {
+      setRepairProgress(null);
+    }
+  }, [repairConfirm, rescan, customFolders, applyScanResult, showToast]);
+
   // Loads a track's audio into the shared <audio> element (if it isn't
   // already loaded) and starts playback, optionally seeking first.
   const loadAndPlay = useCallback(async (track, seekFraction = 0) => {
@@ -1712,6 +1789,7 @@ export default function App() {
       onDeleteTrack: handleDeleteTrack,
       onDeleteTracks: handleDeleteTracks,
       onRenameTrackFile: handleRenameTrackFile,
+      onRepairTrack: handleRepairTrack,
       trackNotes,
       onSetTrackNote: handleSetTrackNote,
       trackSections,
@@ -1814,6 +1892,7 @@ export default function App() {
       handleDeleteTrack,
       handleDeleteTracks,
       handleRenameTrackFile,
+      handleRepairTrack,
       trackNotes,
       handleSetTrackNote,
       trackSections,
@@ -2470,6 +2549,29 @@ export default function App() {
           {showSavedToast && (
             <div className="undo-toast">
               <span>Saved</span>
+            </div>
+          )}
+          {repairConfirm && (
+            <ConfirmModal
+              title="Repair Track?"
+              message={`This file is named .mp3, but its actual content is ${
+                REPAIR_FORMAT_LABELS[repairConfirm.diagnosis.actualFormat] ||
+                "not a valid MP3"
+              }. Repairing re-encodes it as a genuine 192kbps MP3 in place — every tag, collection, and note stays attached. The original is backed up alongside it first.`}
+              confirmLabel="Repair"
+              danger={false}
+              onConfirm={handleConfirmRepair}
+              onCancel={() => setRepairConfirm(null)}
+            />
+          )}
+          {repairProgress && (
+            <div className="undo-toast">
+              <span>Repairing… {Math.round(repairProgress.fraction * 100)}%</span>
+            </div>
+          )}
+          {toastMessage && (
+            <div className="undo-toast">
+              <span>{toastMessage}</span>
             </div>
           )}
         </DiscContext.Provider>

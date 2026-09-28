@@ -97,4 +97,7 @@ contextBridge.exposeInMainWorld("disc", {
   openDevTools: () => ipcRenderer.invoke("disc:open-devtools"),
   revealCrashLog: () => ipcRenderer.invoke("disc:reveal-crash-log"),
   readRecentCrashes: () => ipcRenderer.invoke("disc:read-recent-crashes"),
+  diagnoseTrack: (filePath) => ipcRenderer.invoke("disc:diagnose-track", filePath),
+  repairTrackFile: (filePath, bytes) =>
+    ipcRenderer.invoke("disc:repair-track-file", { filePath, bytes }),
 });
