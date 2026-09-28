@@ -26,6 +26,16 @@ if (process.platform === "win32") {
   }
 }
 
+// Dev-only escape hatch so a second checkout (a git worktree used for
+// testing a branch, for instance) doesn't share userData — and therefore
+// localStorage and device-identity.json — with whatever install is
+// already using the default profile. Without this, an untested branch
+// could silently read/write real data, including emitting Studio Sync
+// events under the real device's identity into a real shared folder.
+if (process.env.DISC_USER_DATA) {
+  app.setPath("userData", process.env.DISC_USER_DATA);
+}
+
 // Where Disc's own releases are published — used by the update check
 // below. Public repo, so the GitHub API needs no auth for this.
 const UPDATE_REPO = "Contraption8or/Disc";
