@@ -87,7 +87,14 @@
 }
 
 .pomodoro-panel__ring-track {
-  stroke: var(--bg-panel-alt);
+  /* --bg-panel-alt-base, not --bg-panel-alt: when Gradient backgrounds
+     (Themes > Effects) is on, --bg-panel-alt holds a CSS linear-gradient()
+     value — a valid `background`, but not a legal SVG stroke paint, so the
+     browser silently drops it to "none" and the whole track disappears,
+     leaving only the accent progress arc floating with nothing behind it.
+     The "-base" variable (see applyThemeById/customThemeEngine.js) is
+     always the theme's flat color regardless of that setting. */
+  stroke: var(--bg-panel-alt-base, var(--bg-panel-alt));
 }
 
 .pomodoro-panel__ring-progress {

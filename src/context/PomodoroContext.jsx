@@ -49,6 +49,30 @@ export function PomodoroProvider({ children }) {
     savePomodoroSettings(settings);
   }, [settings]);
 
+  // updateSettings only ever touched the settings themselves — secondsLeft
+  // is separate state that nothing here recalculated, so editing "Work
+  // (min)" (etc.) in the settings panel visibly changed nothing about the
+  // timer actually counting down until the phase happened to end or reset
+  // was pressed. This shifts the remaining time by exactly however much
+  // the *current* phase's duration just changed by: idle at the old full
+  // duration, that lands exactly on the new full duration; mid-countdown,
+  // it adds/removes the same amount from what's left rather than
+  // recomputing from elapsed time, which would jump the display around
+  // for no reason a shorter/longer phase wouldn't otherwise explain.
+  // Settings that don't affect the current phase's duration (sound, the
+  // other two phases' lengths, session count) leave oldDuration ===
+  // newDuration, so this is a no-op for them.
+  const prevSettingsRef = useRef(settings);
+  useEffect(() => {
+    const prevSettings = prevSettingsRef.current;
+    prevSettingsRef.current = settings;
+    if (prevSettings === settings) return;
+    const oldDuration = phaseDurationSeconds(phaseRef.current, prevSettings);
+    const newDuration = phaseDurationSeconds(phaseRef.current, settings);
+    if (oldDuration === newDuration) return;
+    setSecondsLeft((prev) => Math.max(0, prev + (newDuration - oldDuration)));
+  }, [settings]);
+
   const playChime = useCallback(() => {
     if (!settings.soundEnabled) return;
     try {
