@@ -406,7 +406,7 @@ export default function SettingsModal({ onClose }) {
           placeholder="e.g. Peter's PC"
         />
 
-        <label className="settings-modal__toggle-row" style={{ marginTop: "var(--space-4)" }}>
+        <label className="settings-modal__toggle-row settings-modal__toggle-row--spaced">
           <span>Enable Studio Sync</span>
           <input
             type="checkbox"
@@ -456,31 +456,27 @@ export default function SettingsModal({ onClose }) {
           misbehaving and you want to see why, or if you're relaying a problem to whoever
           maintains this app.
         </p>
-        {recentCrashes.length > 0 && (
-          <p className="settings-modal__note settings-modal__note--top">
-            {recentCrashes.length} recent crash{recentCrashes.length === 1 ? "" : "es"} logged —
-            last one {new Date(recentCrashes[recentCrashes.length - 1].ts).toLocaleString()}.
-          </p>
-        )}
-        <div className="settings-modal__actions">
+        <div className="settings-modal__troubleshoot-actions">
           <button
-            className="settings-modal__cancel"
-            style={{ width: "100%" }}
+            className="settings-modal__ghost-btn"
             onClick={() => window.disc?.openDevTools()}
           >
             Open DevTools
           </button>
-        </div>
-        {recentCrashes.length > 0 && (
-          <div className="settings-modal__actions">
+          {recentCrashes.length > 0 && (
             <button
-              className="settings-modal__cancel"
-              style={{ width: "100%" }}
+              className="settings-modal__ghost-btn"
               onClick={() => window.disc?.revealCrashLog()}
             >
               Show Crash Log
             </button>
-          </div>
+          )}
+        </div>
+        {recentCrashes.length > 0 && (
+          <p className="settings-modal__note">
+            {recentCrashes.length} recent crash{recentCrashes.length === 1 ? "" : "es"} logged —
+            last one {new Date(recentCrashes[recentCrashes.length - 1].ts).toLocaleString()}.
+          </p>
         )}
 
         <div className="settings-modal__actions">
