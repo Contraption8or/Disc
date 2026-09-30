@@ -1,10 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from "node:fs";
+import { watch, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { createRequire } from "node:module";
 import AdmZip from "adm-zip";
@@ -24,6 +25,16 @@ if (process.platform === "win32") {
   } catch {
     mouseState = null;
   }
+}
+
+// Dev-only escape hatch so a second checkout (a git worktree used for
+// testing a branch, for instance) doesn't share userData — and therefore
+// localStorage and device-identity.json — with whatever install is
+// already using the default profile. Without this, an untested branch
+// could silently read/write real data, including emitting Studio Sync
+// events under the real device's identity into a real shared folder.
+if (process.env.DISC_USER_DATA) {
+  app.setPath("userData", process.env.DISC_USER_DATA);
 }
 
 // Where Disc's own releases are published — used by the update check
@@ -94,6 +105,40 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+// Without this, launching Disc while it's already running doesn't do
+// nothing so much as it does something confusing: a second full process
+// tree (Vite + Electron) spins up and immediately collides with the first
+// over port 5173, and depending on timing that can either silently fail
+// or leave stray processes behind — repeated launches this way is
+// genuinely how a machine ends up with a pile of stuck node/electron
+// processes and a Desktop shortcut that looks like it's doing nothing.
+// requestSingleInstanceLock() is the standard Electron fix: a second
+// launch attempt hands off to the first instance (which just focuses its
+// window, see the "second-instance" listener below) and quits
+// immediately instead of trying to run alongside it.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+// Windows identifies running apps for taskbar pinning/grouping/
+// notifications by this id, not by window title or icon — without it,
+// every Electron app running from the same generic node_modules/electron/
+// dist/electron.exe (true for any dev-mode Electron app, not just this
+// one) is indistinguishable to Windows, which is very likely why pinning
+// straight from the running taskbar button falls back to Electron's own
+// generic icon regardless of what icon the BrowserWindow itself was given.
+// Deliberately its own id, distinct from package.json's build.appId
+// ("com.disc.app") — that id is what a real packaged install registers
+// with Windows (Start Menu entry, Programs-and-Features entry, icon), and
+// a dev-mode instance squatting on the same id can end up with a blank/
+// generic taskbar icon if that packaged install is ever removed while
+// Windows still has this id cached against it. A distinct id sidesteps
+// that regardless of what is or isn't installed.
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.disc.app.dev");
+}
+
 let mainWindow = null;
 let pomodoroWindow = null; // the standalone floating Pomodoro widget — see createPomodoroWindow
 let normalBounds = null; // remembered so we can restore after compact mode
@@ -104,6 +149,7 @@ const watchDebounceTimers = new Map(); // key -> Timeout
 // like the memory limit that have to be known before the window/renderer
 // even exists) ---------------------------------------------------------
 const settingsPath = path.join(app.getPath("userData"), "disc-settings.json");
+const crashLogPath = path.join(app.getPath("userData"), "crash-log.jsonl");
 
 // Where a marked section's trimmed clip lives for dragging out to Premiere
 // (see src/audio/sectionDrag.js) — a ".disc-sections" subfolder right next
@@ -135,6 +181,139 @@ function saveSettings(settings) {
     // Best effort — worst case the setting doesn't persist.
   }
 }
+
+// --- Studio Sync: per-device identity + append-only event log ---------
+// See docs/collab-sync-scope.md. Each install gets a random id (never
+// synced — it's what names this device's own log file) and an editable
+// display name. Deliberately stored outside userData's Local Storage
+// (which is what the renderer's own localStorage uses) since this needs
+// to be readable before/without a renderer at all, same reasoning as
+// disc-settings.json above.
+const deviceIdentityPath = path.join(app.getPath("userData"), "device-identity.json");
+
+// Folder used inside a shared/synced music directory for the event log —
+// same "dot-prefixed, explicitly skipped by the scanner" pattern as
+// SECTIONS_DIR_NAME above, so it never shows up as library content.
+const SYNC_DIR_NAME = ".disc-sync";
+
+function loadDeviceIdentity() {
+  try {
+    return JSON.parse(readFileSync(deviceIdentityPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveDeviceIdentity(identity) {
+  try {
+    const dir = path.dirname(deviceIdentityPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(deviceIdentityPath, JSON.stringify(identity, null, 2));
+  } catch {
+    // Best effort — worst case a new id gets generated next launch.
+  }
+}
+
+ipcMain.handle("disc:get-device-identity", () => {
+  let identity = loadDeviceIdentity();
+  if (!identity?.id) {
+    identity = { id: randomUUID(), name: os.hostname() || "This PC" };
+    saveDeviceIdentity(identity);
+  }
+  return identity;
+});
+
+ipcMain.handle("disc:set-device-name", (_event, name) => {
+  const identity = loadDeviceIdentity() || { id: randomUUID() };
+  identity.name = (name || "").trim() || identity.name || "This PC";
+  saveDeviceIdentity(identity);
+  return identity;
+});
+
+// Appends this device's own batch of sync events to its own .jsonl file —
+// never any other device's file, so two machines writing at once (the
+// scenario that actually risks corruption over something like Resilio
+// Sync) can never collide at the filesystem level. One line per event,
+// newline-delimited, so a partial file sync mid-transfer just means a few
+// missing recent lines rather than one unparseable blob.
+ipcMain.handle("disc:append-sync-events", async (_event, { rootDir, deviceId, events }) => {
+  if (!rootDir || !deviceId || !events?.length) return { ok: false };
+  try {
+    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${deviceId}.jsonl`);
+    const lines = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    appendFileSync(filePath, lines, "utf8");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+// Reads every device's event log plus its published display name (a
+// small separate .meta.json per device, since the device's actual name
+// lives locally in device-identity.json and is never itself an event).
+// Skips any single line that fails to parse — a partial trailing line
+// from a sync still mid-transfer — rather than failing the whole read;
+// the rest of that device's history is still perfectly valid.
+ipcMain.handle("disc:read-sync-state", async (_event, rootDir) => {
+  if (!rootDir) return { events: [], deviceNames: {} };
+  const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+  let entries;
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return { events: [], deviceNames: {} };
+  }
+
+  const events = [];
+  const deviceNames = {};
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry);
+    if (entry.endsWith(".jsonl")) {
+      let text;
+      try {
+        text = await fs.readFile(full, "utf8");
+      } catch {
+        continue;
+      }
+      for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          events.push(JSON.parse(trimmed));
+        } catch {
+          // Partial trailing line — skip, see comment above.
+        }
+      }
+    } else if (entry.endsWith(".meta.json")) {
+      try {
+        const meta = JSON.parse(await fs.readFile(full, "utf8"));
+        if (meta?.id) deviceNames[meta.id] = meta.name || meta.id;
+      } catch {
+        // Malformed/partially-synced meta file — ignore it.
+      }
+    }
+  }
+
+  return { events, deviceNames };
+});
+
+// Publishes this device's display name into the shared folder so other
+// machines can show "Peter's PC" instead of a raw device id — the id
+// itself already names the .jsonl file, this is purely the human label.
+ipcMain.handle("disc:write-device-meta", async (_event, { rootDir, id, name }) => {
+  if (!rootDir || !id) return { ok: false };
+  try {
+    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `${id}.meta.json`), JSON.stringify({ id, name }, null, 2));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
 
 // V8's heap size flag only takes effect if set before the app (and its
 // renderer processes) actually start, so this has to happen here at the
@@ -265,7 +444,23 @@ function createWindow() {
     // instead of blending with it (shows up as a real blurred backdrop
     // with the entire Disc UI missing).
     backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
-    title: "Disc",
+    // Deliberately not just "Disc" — launch-disc.vbs uses AppActivate to
+    // detect whether the app is already running before deciding to launch
+    // it, and AppActivate does a case-insensitive *prefix* match against
+    // every open window's title. A plain "Disc" title can match something
+    // else entirely (a File Explorer window for a folder literally named
+    // "disc", say), which AppActivate happily "activates" (brings to
+    // front) instead of ever starting the app — the launcher silently
+    // does nothing. This longer, more specific title is unlikely to
+    // prefix-match anything else.
+    title: "Disc — Music Library",
+    // Without this, dev mode (`electron .`, not a packaged build) shows
+    // Electron's own generic default icon in the taskbar instead of
+    // Disc's — a packaged build gets this for free from the .exe's own
+    // embedded icon resource (see package.json's build.win config), but
+    // that only applies once actually built; running from source needs
+    // it set explicitly.
+    icon: path.join(__dirname, "assets", "disc-icon.ico"),
     frame: false,
     ...(useAcrylic ? { backgroundMaterial: "acrylic", transparent: true } : {}),
     webPreferences: {
@@ -290,12 +485,27 @@ function createWindow() {
     },
   });
 
+  // Belt-and-suspenders alongside the `icon:` constructor option above —
+  // harmless, and keeps the window's icon explicitly set on the live
+  // native handle rather than relying solely on constructor-time state.
+  mainWindow.setIcon(nativeImage.createFromPath(path.join(__dirname, "assets", "disc-icon.ico")));
+
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  // Electron syncs the window title to the page's own <title> on every
+  // navigation/reload by default, which would silently undo the title set
+  // above (index.html's <title> is just "Disc") — launch-disc.vbs depends
+  // on the window title staying exactly "Disc — Music Library" to reliably
+  // detect an already-running instance (see comment there), so that has to
+  // win over whatever the page sets.
+  mainWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+  });
 
   // "Maximized" no longer means real OS-level win.maximize() at all (see
   // disc:window-toggle-maximize below for why) — these two just keep
@@ -311,6 +521,48 @@ function createWindow() {
   // the user manually dragging an edge — so corners stay in sync with
   // whatever's actually on screen, not just real OS-level maximize.
   mainWindow.on("resize", () => updateWindowCorners(mainWindow));
+
+  // The main *process* surviving a renderer crash doesn't mean the user
+  // is fine — Disc's title bar (including its close button) is drawn by
+  // the same renderer that just died, so a crash otherwise leaves a
+  // window that's stuck on screen, blank, with no way to close it short
+  // of Alt+F4 or Task Manager. Logs first (so there's a record even if
+  // nobody was watching when it happened), then a native dialog for
+  // recovery — native because it doesn't depend on the crashed page to
+  // render, unlike everything else in this app.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    try {
+      const entry = {
+        ts: new Date().toISOString(),
+        reason: details.reason,
+        exitCode: details.exitCode,
+      };
+      appendFileSync(crashLogPath, JSON.stringify(entry) + "\n", "utf8");
+    } catch {
+      // Logging the crash is best-effort — nothing to do if even that fails.
+    }
+    if (!mainWindow) return;
+    dialog
+      .showMessageBox(mainWindow, {
+        type: "error",
+        title: "Disc crashed",
+        message: `Disc's window stopped responding (${details.reason}).`,
+        detail:
+          "This has been logged (Settings → Troubleshooting has a button to find the log). Reload to keep working, or close the window.",
+        buttons: ["Reload", "Close"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((result) => {
+        if (!mainWindow) return;
+        if (result.response === 0) {
+          if (isDev) mainWindow.loadURL("http://localhost:5173");
+          else mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+        } else {
+          mainWindow.close();
+        }
+      });
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -887,6 +1139,7 @@ function createPomodoroWindow() {
     show: false, // shown (and raised) on ready-to-show below
     backgroundColor: "#1b1b1f",
     title: "Disc — Pomodoro",
+    icon: path.join(__dirname, "assets", "disc-icon.ico"),
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -918,7 +1171,18 @@ function createPomodoroWindow() {
   });
 }
 
+// The losing instance already called app.quit() above — this just makes
+// sure it never gets as far as opening a second window in the meantime.
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
+
   // The URL is disc-media://play/<encoded absolute file path>. "play" as
   // the host is arbitrary (custom schemes need one) — everything that
   // matters is in the path, which is exactly the file path run through
@@ -1078,6 +1342,40 @@ ipcMain.handle("disc:is-acrylic-window-active", () => useAcrylic);
 
 ipcMain.handle("disc:get-app-version", () => {
   return app.getVersion();
+});
+
+// On-demand DevTools escape hatch for when someone (a user relaying to a
+// developer, or a developer themselves) needs to see console/network
+// output while something's misbehaving, without a special launch flag.
+ipcMain.handle("disc:open-devtools", () => {
+  mainWindow?.webContents.openDevTools({ mode: "detach" });
+  return true;
+});
+
+// Renderer crashes (see the render-process-gone handler above) get logged
+// here regardless of whether anyone had DevTools open at the time —
+// "reveal in Explorer" so a report of "the last few crashes look like
+// this" doesn't require walking someone through a userData file path.
+ipcMain.handle("disc:reveal-crash-log", () => {
+  if (!existsSync(crashLogPath)) return { exists: false };
+  shell.showItemInFolder(crashLogPath);
+  return { exists: true };
+});
+
+ipcMain.handle("disc:read-recent-crashes", async () => {
+  try {
+    const text = await fs.readFile(crashLogPath, "utf8");
+    const lines = text.trim().split("\n").filter(Boolean);
+    return lines.slice(-5).map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
 });
 
 // Used when a folder gets dragged in from Explorer — confirms the dropped
@@ -1441,7 +1739,7 @@ async function scanForMp3s(rootDir) {
         // Marked-section clips (see sectionsDirFor above) live right next
         // to their source track, inside a folder a normal scan would
         // otherwise happily walk into and list as real library tracks.
-        if (entry.name === SECTIONS_DIR_NAME) continue;
+        if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
         await walk(fullPath);
       } else if (fileType) {
         let sizeBytes = 0;
@@ -1556,7 +1854,7 @@ ipcMain.handle("disc:scan-for-convertible", async (_event, rootDir) => {
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === SECTIONS_DIR_NAME) continue;
+        if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
         await walk(fullPath);
       } else if (entry.isFile()) {
         const ext = entry.name.toLowerCase().split(".").pop();
@@ -1584,6 +1882,71 @@ ipcMain.handle("disc:write-converted-mp3", async (_event, { destFolder, fileName
     }
     await fs.writeFile(destPath, Buffer.from(bytes));
     return { success: true, path: destPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Classifies a file by its actual header bytes rather than trusting its
+// extension — a downloader/converter somewhere upstream can save, say,
+// AAC/M4A content with a .mp3 extension (this bit a real track once: a
+// file played fine inside Disc, since Chromium's Web Audio decodes AAC
+// regardless of extension, but DaVinci Resolve's importer inspected the
+// real container and silently refused to recognize it on drag-and-drop).
+// Only distinguishes what "Repair Track" cares about — genuine MP3 vs.
+// the handful of other containers Disc already knows how to decode.
+function sniffAudioFormat(buffer) {
+  if (buffer.length >= 3 && buffer.toString("latin1", 0, 3) === "ID3") return "mp3";
+  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return "mp3";
+  if (buffer.length >= 8 && buffer.toString("latin1", 4, 8) === "ftyp") return "mp4";
+  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "OggS") return "ogg";
+  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "fLaC") return "flac";
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("latin1", 0, 4) === "RIFF" &&
+    buffer.toString("latin1", 8, 12) === "WAVE"
+  ) {
+    return "wav";
+  }
+  return "unknown";
+}
+
+// "Repair Track" (right-click a track) only actually applies to files
+// claiming to be .mp3 — that's the concrete case this was built for, and
+// generalizing to "repair" a mislabeled .wav/.flac/etc. would mean
+// guessing what the *correct* fix even is, which isn't something this
+// tries to do. Reports "healthy" for anything else so the UI can say
+// there's nothing to repair rather than claiming something's wrong.
+ipcMain.handle("disc:diagnose-track", async (_event, filePath) => {
+  try {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const fd = await fs.open(filePath, "r");
+    const buffer = Buffer.alloc(16);
+    await fd.read(buffer, 0, 16, 0);
+    await fd.close();
+    const actualFormat = sniffAudioFormat(buffer);
+    const healthy = ext !== "mp3" || actualFormat === "mp3";
+    return { healthy, claimedExtension: ext, actualFormat };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Overwrites a track's file with newly re-encoded bytes at the *same*
+// path — used by Repair Track. Backs up the original first (never
+// destructive), and finds a non-colliding backup name rather than
+// clobbering a previous repair's backup if this somehow runs twice.
+ipcMain.handle("disc:repair-track-file", async (_event, { filePath, bytes }) => {
+  try {
+    let backupPath = `${filePath}.original.bak`;
+    let counter = 1;
+    while (existsSync(backupPath)) {
+      backupPath = `${filePath}.original-${counter}.bak`;
+      counter += 1;
+    }
+    await fs.copyFile(filePath, backupPath);
+    await fs.writeFile(filePath, Buffer.from(bytes));
+    return { success: true, backupPath };
   } catch (err) {
     return { success: false, error: err.message };
   }

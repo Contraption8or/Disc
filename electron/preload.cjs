@@ -94,4 +94,17 @@ contextBridge.exposeInMainWorld("disc", {
   exportProfileToFile: (profileName, data) =>
     ipcRenderer.invoke("disc:export-profile-to-file", { profileName, data }),
   importProfileFromFile: () => ipcRenderer.invoke("disc:import-profile-from-file"),
+  openDevTools: () => ipcRenderer.invoke("disc:open-devtools"),
+  revealCrashLog: () => ipcRenderer.invoke("disc:reveal-crash-log"),
+  readRecentCrashes: () => ipcRenderer.invoke("disc:read-recent-crashes"),
+  diagnoseTrack: (filePath) => ipcRenderer.invoke("disc:diagnose-track", filePath),
+  repairTrackFile: (filePath, bytes) =>
+    ipcRenderer.invoke("disc:repair-track-file", { filePath, bytes }),
+  getDeviceIdentity: () => ipcRenderer.invoke("disc:get-device-identity"),
+  setDeviceName: (name) => ipcRenderer.invoke("disc:set-device-name", name),
+  appendSyncEvents: (rootDir, deviceId, events) =>
+    ipcRenderer.invoke("disc:append-sync-events", { rootDir, deviceId, events }),
+  readSyncState: (rootDir) => ipcRenderer.invoke("disc:read-sync-state", rootDir),
+  writeDeviceMeta: (rootDir, id, name) =>
+    ipcRenderer.invoke("disc:write-device-meta", { rootDir, id, name }),
 });

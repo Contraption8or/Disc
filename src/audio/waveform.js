@@ -58,8 +58,25 @@ export function releaseSlot() {
   }
 }
 
+// decodeAudioData produces a full-resolution raw PCM buffer — for a very
+// long file (a multi-hour compilation, a full-album single-file rip) that
+// can allocate gigabytes on its own. This actually happened: two logged
+// crash-log entries both showed reason "oom", and this library has (at
+// least) one ~285MB "Best of..." compilation-style mp3. File size is a
+// cheap, already-known proxy (every track object already carries
+// sizeBytes from the scan) — no extra I/O or probing needed to check it.
+export const MAX_ANALYZABLE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
 export function getCachedWaveform(trackId) {
   return peaksCache.get(trackId) || null;
+}
+
+// The cache is keyed by track id (file path), not file content — if a
+// track's bytes change on disk without its path changing (e.g. Repair
+// Track re-encoding it in place), the cached peaks would otherwise keep
+// showing the old file's waveform until the app restarts.
+export function invalidateWaveform(trackId) {
+  peaksCache.delete(trackId);
 }
 
 export function computeWaveform(track, bucketCount = 360) {
@@ -70,6 +87,17 @@ export function computeWaveform(track, bucketCount = 360) {
     return inFlight.get(track.id);
   }
   if (!window.disc) return Promise.resolve(null);
+
+  // Skipped, not queued-and-retried — cached immediately so this doesn't
+  // get attempted again every time the row scrolls into view. Still fully
+  // playable via normal <audio> streaming, which never needs a full
+  // decode; it just won't have a waveform, the same tradeoff video clips
+  // already have.
+  if (track.sizeBytes > MAX_ANALYZABLE_SIZE_BYTES) {
+    const result = { peaks: null, duration: null, tooLarge: true };
+    peaksCache.set(track.id, result);
+    return Promise.resolve(result);
+  }
 
   const promise = (async () => {
     await acquireSlot();

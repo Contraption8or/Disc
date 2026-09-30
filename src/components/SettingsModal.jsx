@@ -26,6 +26,17 @@ function buildCpuOptions(cpuCount) {
   return options;
 }
 
+function formatSyncedAgo(ts) {
+  if (!ts) return "Never";
+  const secondsAgo = Math.round((Date.now() - ts) / 1000);
+  if (secondsAgo < 5) return "Just now";
+  if (secondsAgo < 60) return `${secondsAgo}s ago`;
+  const minutesAgo = Math.round(secondsAgo / 60);
+  if (minutesAgo < 60) return `${minutesAgo} min ago`;
+  const hoursAgo = Math.round(minutesAgo / 60);
+  return `${hoursAgo} hr ago`;
+}
+
 function formatTimeLeft({ completed, total, startedAt }) {
   if (!startedAt || completed === 0 || total === 0) return "Estimating…";
   const elapsedMs = Date.now() - startedAt;
@@ -50,7 +61,16 @@ export default function SettingsModal({ onClose }) {
     onResetPreload,
     preloadConcurrency,
     onSetPreloadConcurrency,
+    deviceIdentity,
+    onSetDeviceName,
+    studioSyncEnabled,
+    onSetStudioSyncEnabled,
+    syncStatus,
+    onSyncNow,
+    musicFolderPath,
   } = useDisc();
+  const [deviceNameDraft, setDeviceNameDraft] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [currentLimit, setCurrentLimit] = useState(null);
   const [selected, setSelected] = useState("");
   const [currentThreadPoolSize, setCurrentThreadPoolSize] = useState(null);
@@ -62,9 +82,17 @@ export default function SettingsModal({ onClose }) {
   const [updateStatus, setUpdateStatus] = useState("idle");
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateError, setUpdateError] = useState(null);
+  const [recentCrashes, setRecentCrashes] = useState([]);
   const rootRef = useRef(null);
 
   const candidateCount = getPreloadCandidates(allTracks).length;
+
+  // deviceIdentity loads asynchronously (main process reads/creates it) —
+  // sync the draft once it's actually available rather than starting the
+  // input from an empty string that would otherwise briefly overwrite it.
+  useEffect(() => {
+    if (deviceIdentity?.name) setDeviceNameDraft(deviceIdentity.name);
+  }, [deviceIdentity]);
 
   useEffect(() => {
     window.disc?.getMemoryLimit().then((mb) => {
@@ -77,6 +105,7 @@ export default function SettingsModal({ onClose }) {
     });
     window.disc?.getCpuCount().then(setCpuCount);
     window.disc?.getAppVersion().then(setAppVersion);
+    window.disc?.readRecentCrashes().then(setRecentCrashes);
   }, []);
 
   // Deliberately not auto-run on open — checking is a real network call to
@@ -353,6 +382,106 @@ export default function SettingsModal({ onClose }) {
         <p className="settings-modal__note settings-modal__note--top">
           Gradient backgrounds and Spill live in the Themes dropdown, under the Effects tab.
         </p>
+
+        <div className="settings-modal__divider" />
+        <div className="settings-modal__section-title">Studio Sync</div>
+
+        <label className="settings-modal__label">This device's name</label>
+        <p className="settings-modal__note">
+          Shown to collaborators so shared changes can be attributed to a machine by name
+          instead of a random id.
+        </p>
+        <input
+          className="settings-modal__text-input"
+          value={deviceNameDraft}
+          onChange={(e) => setDeviceNameDraft(e.target.value)}
+          onBlur={() => {
+            const trimmed = deviceNameDraft.trim();
+            if (trimmed && trimmed !== deviceIdentity?.name) onSetDeviceName(trimmed);
+            else setDeviceNameDraft(deviceIdentity?.name || "");
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          placeholder="e.g. Peter's PC"
+        />
+
+        <label className="settings-modal__toggle-row" style={{ marginTop: "var(--space-4)" }}>
+          <span>Enable Studio Sync</span>
+          <input
+            type="checkbox"
+            checked={studioSyncEnabled}
+            disabled={!musicFolderPath}
+            onChange={(e) => onSetStudioSyncEnabled(e.target.checked)}
+          />
+        </label>
+        <p className="settings-modal__note">
+          {musicFolderPath
+            ? "Merges tags, collections, notes, and folders from every device sharing this Music Folder. Everything else (theme, layout, shortcuts) stays local to this machine."
+            : "Needs a Music Folder set first (Command Palette → Choose Music Folder) — that's the shared root Studio Sync reads and writes .disc-sync/ inside of."}
+        </p>
+
+        {studioSyncEnabled && (
+          <div className="settings-modal__sync-status">
+            <div className="settings-modal__sync-status-row">
+              <span>Last synced</span>
+              <span>{formatSyncedAgo(syncStatus.lastSyncedAt)}</span>
+            </div>
+            <div className="settings-modal__sync-status-row">
+              <span>Devices seen</span>
+              <span>
+                {syncStatus.deviceCount === 0
+                  ? "Just this one"
+                  : Object.values(syncStatus.deviceNames).join(", ") || syncStatus.deviceCount}
+              </span>
+            </div>
+            <button
+              className="settings-modal__sync-now"
+              disabled={syncing}
+              onClick={async () => {
+                setSyncing(true);
+                await onSyncNow();
+                setSyncing(false);
+              }}
+            >
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+          </div>
+        )}
+
+        <div className="settings-modal__divider" />
+        <div className="settings-modal__section-title">Troubleshooting</div>
+        <p className="settings-modal__note settings-modal__note--top">
+          DevTools shows console errors and network activity — useful if something's
+          misbehaving and you want to see why, or if you're relaying a problem to whoever
+          maintains this app.
+        </p>
+        {recentCrashes.length > 0 && (
+          <p className="settings-modal__note settings-modal__note--top">
+            {recentCrashes.length} recent crash{recentCrashes.length === 1 ? "" : "es"} logged —
+            last one {new Date(recentCrashes[recentCrashes.length - 1].ts).toLocaleString()}.
+          </p>
+        )}
+        <div className="settings-modal__actions">
+          <button
+            className="settings-modal__cancel"
+            style={{ width: "100%" }}
+            onClick={() => window.disc?.openDevTools()}
+          >
+            Open DevTools
+          </button>
+        </div>
+        {recentCrashes.length > 0 && (
+          <div className="settings-modal__actions">
+            <button
+              className="settings-modal__cancel"
+              style={{ width: "100%" }}
+              onClick={() => window.disc?.revealCrashLog()}
+            >
+              Show Crash Log
+            </button>
+          </div>
+        )}
 
         <div className="settings-modal__actions">
           <button className="settings-modal__cancel" style={{ width: "100%" }} onClick={onClose}>

@@ -57,6 +57,70 @@
   font-size: 12px;
 }
 
+.settings-modal__text-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.settings-modal__text-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-modal__sync-status {
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.settings-modal__sync-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.settings-modal__sync-status-row span:first-child {
+  color: var(--text-tertiary);
+}
+
+.settings-modal__sync-status-row span:last-child {
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.settings-modal__sync-now {
+  width: 100%;
+  margin-top: var(--space-2);
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-modal__sync-now:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.settings-modal__sync-now:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .settings-modal__note {
   font-size: 11px;
   line-height: 1.6;
