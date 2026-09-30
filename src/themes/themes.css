@@ -30,22 +30,32 @@
 }
 
 /* ---------------------------------------------------------------- */
-/* Premiere Dark — matches Premiere Pro's default near-black theme   */
+/* Gray — matches Premiere Pro's actual default UI, color-picked     */
+/* directly from a real screenshot rather than approximated: its     */
+/* panel background is a true neutral #1b1b1b (equal R/G/B, no       */
+/* blue/purple tint at all, unlike this theme's old #1b1b1f), it's   */
+/* nearly flat — barely any contrast between a panel and the chrome  */
+/* around it — and its one real accent color is the muted, fairly    */
+/* dark blue used to highlight a selected track header (sampled at   */
+/* #215e92), not a bright saturated blue. White text on that blue    */
+/* (not dark text) is also straight from the screenshot — Premiere's */
+/* own selected-track labels are white, which only works because the */
+/* blue itself is darker than a typical UI accent.                   */
 /* ---------------------------------------------------------------- */
 [data-theme="premiere-dark"] {
-  --bg-app: #1b1b1f;
-  --bg-panel: #232327;
-  --bg-panel-alt: #2a2a2f;
-  --bg-hover: #34343a;
-  --bg-active: #3a3a42;
-  --border-color: #3a3a40;
-  --text-primary: #e8e8ea;
-  --text-secondary: #9a9aa2;
-  --text-tertiary: #6c6c74;
-  --accent: #4f9dff;
-  --accent-hover: #6bb0ff;
-  --accent-text: #0d1117;
-  --waveform: #55555e;
+  --bg-app: #1b1b1b;
+  --bg-panel: #202020;
+  --bg-panel-alt: #272727;
+  --bg-hover: #333333;
+  --bg-active: #3d3d3d;
+  --border-color: #3a3a3a;
+  --text-primary: #e6e6e6;
+  --text-secondary: #a3a3a3;
+  --text-tertiary: #707070;
+  --accent: #2d72ab;
+  --accent-hover: #3d84bf;
+  --accent-text: #f4f9ff;
+  --waveform: #4d4d4d;
   --waveform-progress: var(--accent);
 }
 
