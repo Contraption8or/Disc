@@ -154,3 +154,14 @@
 .undo-toast__button:hover {
   background: var(--accent-hover);
 }
+
+.undo-toast__button--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+}
+
+.undo-toast__button--ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}

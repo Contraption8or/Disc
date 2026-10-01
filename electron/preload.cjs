@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld("disc", {
   deleteProfile: (fileName) => ipcRenderer.invoke("disc:delete-profile", fileName),
   exportProfileToFile: (profileName, data) =>
     ipcRenderer.invoke("disc:export-profile-to-file", { profileName, data }),
+  exportProfileWithMusic: (profileName, data, tracks) =>
+    ipcRenderer.invoke("disc:export-profile-with-music", { profileName, data, tracks }),
   importProfileFromFile: () => ipcRenderer.invoke("disc:import-profile-from-file"),
   openDevTools: () => ipcRenderer.invoke("disc:open-devtools"),
   revealCrashLog: () => ipcRenderer.invoke("disc:reveal-crash-log"),

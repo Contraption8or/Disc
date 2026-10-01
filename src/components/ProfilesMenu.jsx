@@ -5,11 +5,16 @@ import {
   resetProfileData,
   HIDE_DEFAULT_PROFILE_KEY,
 } from "../profiles/profileData.js";
+import { getTrackKey } from "../sync/trackKey.js";
 import ConfirmModal from "./ConfirmModal.jsx";
 import Icon from "./Icon.jsx";
 import "./ProfilesMenu.css";
 
-export default function ProfilesMenu() {
+// musicFolderPath/allTracks/customFolders come in as props, not useDisc() —
+// this renders inside TitleBar, which sits outside <DiscContext.Provider>
+// (the provider only wraps the dockview panel area), same reason every
+// other thing TitleBar needs is already threaded through as a prop.
+export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders }) {
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [creating, setCreating] = useState(false);
@@ -18,6 +23,8 @@ export default function ProfilesMenu() {
   const [switchTarget, setSwitchTarget] = useState(null); // { fileName, profileName } | null
   const [deleteTarget, setDeleteTarget] = useState(null); // { fileName, profileName } | null
   const [status, setStatus] = useState(""); // brief inline feedback, e.g. "Exported"
+  const [exportingMusic, setExportingMusic] = useState(false);
+  const [importing, setImporting] = useState(false);
   // The built-in Default profile (see resetProfileData) is always there, but
   // its row can be tucked away for anyone who'd rather not see it.
   const [hideDefault, setHideDefault] = useState(() => {
@@ -143,6 +150,33 @@ export default function ProfilesMenu() {
     if (result?.success) flashStatus("Exported");
   }
 
+  // Same export, but also bundles every track Disc currently knows about
+  // (main folder + every linked custom folder) into the archive, so
+  // importing it elsewhere doesn't need any of the same files to already
+  // exist there — see docs on disc:export-profile-with-music in main.js
+  // for the trackKey/manifest scheme that makes that work. Can take a
+  // while for a large library (every file gets read and re-zipped), so
+  // this disables the button and says so rather than looking stuck.
+  async function handleExportCurrentWithMusic() {
+    if (!window.disc || exportingMusic) return;
+    setExportingMusic(true);
+    try {
+      const name = `Disc Profile ${new Date().toLocaleDateString()}`;
+      const data = collectProfileData();
+      const tracks = allTracks
+        .map((t) => ({
+          filePath: t.filePath,
+          trackKey: getTrackKey(t.filePath, { musicFolderPath, customFolders }),
+        }))
+        .filter((t) => t.trackKey);
+      const result = await window.disc.exportProfileWithMusic(name, data, tracks);
+      if (result?.success) flashStatus(`Exported with ${result.trackCount} track(s)`);
+      else if (!result?.cancelled) flashStatus(result?.error || "Export failed");
+    } finally {
+      setExportingMusic(false);
+    }
+  }
+
   // Importing always just adds the file to the saved profiles list —
   // it never immediately switches to it. That's a deliberate
   // simplification: a "switch right away or just save it?" choice would
@@ -154,17 +188,31 @@ export default function ProfilesMenu() {
   // an imported profile just becomes one more entry someone can switch
   // to from there when they're ready, using a flow that's already clear.
   async function handleImportClick() {
-    if (!window.disc) return;
-    const result = await window.disc.importProfileFromFile();
-    if (!result) return; // cancelled
-    if (!result.success) {
-      flashStatus(result.error || "Couldn't read that file");
-      return;
-    }
-    const saveResult = await window.disc.saveProfile(result.profileName, result.data);
-    if (saveResult?.success) {
-      flashStatus("Imported");
-      refreshProfiles();
+    if (!window.disc || importing) return;
+    setImporting(true);
+    try {
+      // A plain .json resolves almost instantly; a .discprofile.zip can
+      // mean copying a whole library's worth of files to wherever the
+      // person picks in the dialog this triggers — importing stays true
+      // the whole time either way so the button reads "Importing…"
+      // rather than looking stuck on the slow path.
+      const result = await window.disc.importProfileFromFile();
+      if (!result) return; // cancelled
+      if (!result.success) {
+        if (!result.cancelled) flashStatus(result.error || "Couldn't read that file");
+        return;
+      }
+      const saveResult = await window.disc.saveProfile(result.profileName, result.data);
+      if (saveResult?.success) {
+        flashStatus(
+          typeof result.trackCount === "number"
+            ? `Imported with ${result.trackCount} track(s)`
+            : "Imported"
+        );
+        refreshProfiles();
+      }
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -304,10 +352,20 @@ export default function ProfilesMenu() {
           </button>
           <button
             className="profiles-menu__option profiles-menu__option--action"
+            onClick={handleExportCurrentWithMusic}
+            disabled={exportingMusic}
+            title="Bundles every track Disc currently knows about into the exported file — the person importing it won't need any of the same music already on their machine."
+          >
+            <Icon name="musicNote" size={12} style={{ marginRight: 6 }} />
+            {exportingMusic ? "Zipping…" : "Export Current (with Music)…"}
+          </button>
+          <button
+            className="profiles-menu__option profiles-menu__option--action"
             onClick={handleImportClick}
+            disabled={importing}
           >
             <Icon name="folder" size={12} style={{ marginRight: 6 }} />
-            Import…
+            {importing ? "Importing…" : "Import…"}
           </button>
 
           {hideDefault && (

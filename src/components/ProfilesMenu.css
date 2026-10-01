@@ -82,6 +82,15 @@
   color: var(--text-secondary);
 }
 
+.profiles-menu__option--action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.profiles-menu__option--action:disabled:hover {
+  background: transparent;
+}
+
 .profiles-menu__icon-btn {
   flex-shrink: 0;
   display: flex;

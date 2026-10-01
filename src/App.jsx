@@ -18,6 +18,7 @@ import OggLinkPromptModal from "./components/OggLinkPromptModal.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import PomodoroPanel from "./components/PomodoroPanel.jsx";
 import ImagePanel from "./components/ImagePanel.jsx";
+import UpdateToast from "./components/UpdateToast.jsx";
 import { PomodoroProvider } from "./context/PomodoroContext.jsx";
 import { DiscContext } from "./context/DiscContext.jsx";
 import { getTrackKey } from "./sync/trackKey.js";
@@ -2836,6 +2837,9 @@ export default function App() {
           onTogglePanel={handleTogglePanel}
           appearanceSettings={appearanceSettings}
           onSetAppearance={handleSetAppearance}
+          musicFolderPath={musicFolderPath}
+          allTracks={allTracks}
+          customFolders={customFolders}
         />
       )}
       <div className="app__dock">
@@ -2905,6 +2909,7 @@ export default function App() {
               </button>
             </div>
           )}
+          <UpdateToast />
           {showSavedToast && (
             <div className="undo-toast">
               <span>Saved</span>

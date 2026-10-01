@@ -1567,16 +1567,224 @@ ipcMain.handle("disc:export-profile-to-file", async (_event, { profileName, data
   }
 });
 
+// The "with music" variant of the export above — same profile.json, plus
+// every track the renderer already knows about (main folder + every
+// linked custom folder) added to the archive under music/, keyed by the
+// same main/... or folder:Name/... scheme Studio Sync uses for its own
+// cross-machine track identity (see src/sync/trackKey.js) — the renderer
+// computes each track's key and sends { filePath, trackKey } pairs
+// through, so this file doesn't need its own copy of that logic. A
+// manifest.json records each file's *original* absolute path alongside
+// where it landed in the zip, which is what lets import below rewrite
+// every trackId-keyed profile field (tags, notes, sections, favorites,
+// collections) to match wherever the music actually ends up getting
+// extracted to.
+ipcMain.handle("disc:export-profile-with-music", async (_event, { profileName, data, tracks }) => {
+  if (!mainWindow) return { success: false };
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Export Disc profile with music",
+    defaultPath: `${profileName.replace(/[/\\:*?"<>|]/g, "")}.discprofile.zip`,
+    filters: [{ name: "Disc Profile (with music)", extensions: ["zip"] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, cancelled: true };
+  try {
+    const zip = new AdmZip();
+    const manifest = [];
+    for (const t of tracks || []) {
+      if (!t?.trackKey || !t?.filePath) continue;
+      // "folder:Name/..." isn't a safe path to extract on Windows later
+      // (a bare colon is a reserved path character there) — "folder/Name/..."
+      // carries the same information without that problem.
+      const zipRelPath = t.trackKey.startsWith("folder:")
+        ? `folder/${t.trackKey.slice(7)}`
+        : t.trackKey;
+      const zipDir = path.posix.dirname(`music/${zipRelPath}`);
+      const zipName = path.posix.basename(zipRelPath);
+      try {
+        zip.addLocalFile(t.filePath, zipDir === "." ? "" : zipDir, zipName);
+        manifest.push({ originalPath: t.filePath, zipPath: zipRelPath });
+      } catch {
+        // Skip a file that vanished/became unreadable mid-export rather
+        // than failing the whole archive.
+      }
+    }
+    zip.addFile(
+      "profile.json",
+      Buffer.from(JSON.stringify({ profileName, savedAt: new Date().toISOString(), data }, null, 2))
+    );
+    zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2)));
+    zip.writeZip(result.filePath);
+    return { success: true, filePath: result.filePath, trackCount: manifest.length };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Rewrites every trackId-keyed field in an imported profile's data from
+// the exporting machine's absolute paths to this machine's — pathMap is
+// originalPath -> newPath, built by importProfileZip below as it
+// extracts each file. Anything not in the map (shouldn't normally
+// happen, since the zip was built from exactly these fields' own track
+// ids) is left exactly as it was rather than dropped.
+function remapTrackIdsInProfileData(data, pathMap) {
+  const next = { ...data };
+  const remapObjectKeys = (key) => {
+    if (!next[key]) return;
+    try {
+      const obj = JSON.parse(next[key]);
+      const remapped = {};
+      for (const [id, value] of Object.entries(obj)) remapped[pathMap.get(id) || id] = value;
+      next[key] = JSON.stringify(remapped);
+    } catch {
+      // Leave the raw value alone if it doesn't parse the way expected.
+    }
+  };
+  const remapIdArray = (key) => {
+    if (!next[key]) return;
+    try {
+      const arr = JSON.parse(next[key]);
+      next[key] = JSON.stringify(arr.map((id) => pathMap.get(id) || id));
+    } catch {
+      // Leave as-is.
+    }
+  };
+
+  remapObjectKeys("disc.trackTags");
+  remapObjectKeys("disc.trackNotes");
+  remapObjectKeys("disc.trackSections");
+  remapIdArray("disc.favorites");
+
+  if (next["disc.trackOrder"]) {
+    try {
+      const orderByFolder = JSON.parse(next["disc.trackOrder"]);
+      const remapped = {};
+      for (const [folderKey, ids] of Object.entries(orderByFolder)) {
+        remapped[folderKey] = ids.map((id) => pathMap.get(id) || id);
+      }
+      next["disc.trackOrder"] = JSON.stringify(remapped);
+    } catch {
+      // Leave as-is.
+    }
+  }
+
+  if (next["disc.collections"]) {
+    try {
+      const collections = JSON.parse(next["disc.collections"]);
+      next["disc.collections"] = JSON.stringify(
+        collections.map((c) => ({
+          ...c,
+          trackIds: (c.trackIds || []).map((id) => pathMap.get(id) || id),
+        }))
+      );
+    } catch {
+      // Leave as-is.
+    }
+  }
+
+  return next;
+}
+
+// Extracts a profile+music zip (see the export handler above): reads
+// profile.json and manifest.json, asks where to put the music (there's
+// no sensible default — it's the whole reason this prompt exists instead
+// of silently picking a folder), copies every bundled file there, then
+// points the profile at the new locations (disc.musicFolder, each
+// relinked custom folder's folderPath) and remaps every trackId-keyed
+// field to match. Returns the exact same shape as the plain-.json import
+// path, so the renderer doesn't need to know or care which kind of file
+// it actually picked.
+async function importProfileZip(zipFilePath) {
+  const zip = new AdmZip(zipFilePath);
+  const profileEntry = zip.getEntry("profile.json");
+  if (!profileEntry) return { success: false, error: "Not a valid Disc profile archive" };
+  const parsed = JSON.parse(zip.readAsText(profileEntry));
+  if (!parsed.data) return { success: false, error: "Not a valid Disc profile archive" };
+
+  const manifestEntry = zip.getEntry("manifest.json");
+  const manifest = manifestEntry ? JSON.parse(zip.readAsText(manifestEntry)) : [];
+  if (manifest.length === 0) {
+    // No music actually bundled (every track vanished before export, or
+    // this archive just never had any) — nothing to extract or remap,
+    // same outcome as a plain .json import.
+    return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
+  }
+
+  if (!mainWindow) return { success: false, error: "No window to prompt for a destination" };
+  const destResult = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose where to put the imported music",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (destResult.canceled || destResult.filePaths.length === 0) {
+    return { success: false, cancelled: true };
+  }
+  const destRoot = destResult.filePaths[0];
+
+  const pathMap = new Map();
+  const linkedFolderNames = new Set();
+  for (const entry of manifest) {
+    const zipPath = entry.zipPath; // "main/..." or "folder/Name/..."
+    let newPath;
+    if (zipPath.startsWith("folder/")) {
+      const rest = zipPath.slice(7);
+      const slashIndex = rest.indexOf("/");
+      const folderName = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
+      const relPart = slashIndex === -1 ? "" : rest.slice(slashIndex + 1);
+      linkedFolderNames.add(folderName);
+      newPath = path.join(destRoot, folderName, ...relPart.split("/").filter(Boolean));
+    } else if (zipPath.startsWith("main/")) {
+      newPath = path.join(destRoot, ...zipPath.slice(5).split("/").filter(Boolean));
+    } else {
+      continue;
+    }
+    const zipEntry = zip.getEntry(`music/${zipPath}`);
+    if (!zipEntry) continue;
+    try {
+      const dir = path.dirname(newPath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      await fs.writeFile(newPath, zip.readFile(zipEntry));
+      pathMap.set(entry.originalPath, newPath);
+    } catch {
+      // Skip a file that fails to extract rather than failing the whole import.
+    }
+  }
+
+  const data = remapTrackIdsInProfileData(parsed.data, pathMap);
+  data["disc.musicFolder"] = JSON.stringify(destRoot);
+  if (data["disc.customFolders"]) {
+    try {
+      const folders = JSON.parse(data["disc.customFolders"]);
+      data["disc.customFolders"] = JSON.stringify(
+        folders.map((f) =>
+          linkedFolderNames.has(f.name) ? { ...f, folderPath: path.join(destRoot, f.name) } : f
+        )
+      );
+    } catch {
+      // Leave as-is.
+    }
+  }
+
+  return {
+    success: true,
+    profileName: parsed.profileName || "Imported Profile",
+    data,
+    trackCount: pathMap.size,
+  };
+}
+
 ipcMain.handle("disc:import-profile-from-file", async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Import a Disc profile",
     properties: ["openFile"],
-    filters: [{ name: "Disc Profile", extensions: ["json"] }],
+    filters: [{ name: "Disc Profile", extensions: ["json", "zip"] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
+  const filePath = result.filePaths[0];
   try {
-    const raw = await fs.readFile(result.filePaths[0], "utf8");
+    if (filePath.toLowerCase().endsWith(".zip")) {
+      return await importProfileZip(filePath);
+    }
+    const raw = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(raw);
     if (!parsed.data) return { success: false, error: "Not a valid Disc profile file" };
     return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
@@ -1610,8 +1818,18 @@ ipcMain.handle("disc:is-pomodoro-window-open", () => Boolean(pomodoroWindow));
 // window's, since the whole point of this widget is being pinnable
 // independently of whether the main Disc window is pinned at all.
 ipcMain.handle("disc:toggle-pomodoro-always-on-top", (_event, shouldPin) => {
-  if (!pomodoroWindow) return false;
+  if (!pomodoroWindow || pomodoroWindow.isDestroyed()) return false;
   pomodoroWindow.setAlwaysOnTop(shouldPin, "floating");
+  // Flagging a window as always-on-top only promises it'll stay above
+  // ordinary windows from here on — it doesn't retroactively move it to
+  // the front of whatever's *already* in that same always-on-top tier,
+  // which is exactly how pinning could leave the popup marked "on top"
+  // while still sitting visibly behind something else (hard to repro
+  // reliably, reported mostly on Windows 10). moveTop() doesn't steal
+  // focus, so this doesn't yank attention away from whatever's actually
+  // being worked in — it just settles the popup's own z-order the moment
+  // it's pinned, instead of leaving that to chance.
+  if (shouldPin) pomodoroWindow.moveTop();
   return pomodoroWindow.isAlwaysOnTop();
 });
 
@@ -2036,6 +2254,16 @@ ipcMain.handle("disc:rename-track-file", async (_event, { filePath, newStem }) =
   }
 });
 
+// Case-insensitive on Windows (the only platform this app ships for), a
+// straight string compare everywhere else — used below to catch "this
+// drop target *is* where the file already lives" before it ever reaches
+// the rename-on-collision loop.
+function samePath(a, b) {
+  const na = path.resolve(a);
+  const nb = path.resolve(b);
+  return process.platform === "win32" ? na.toLowerCase() === nb.toLowerCase() : na === nb;
+}
+
 // Copy mp3s dragged into the Disc window from the OS into the chosen
 // music folder. The folder watcher then picks the new files up on its own.
 ipcMain.handle("disc:copy-files-into-folder", async (_event, { folderPath, sourcePaths }) => {
@@ -2050,6 +2278,18 @@ ipcMain.handle("disc:copy-files-into-folder", async (_event, { folderPath, sourc
     }
 
     const baseName = path.basename(sourcePath);
+
+    // Dragging a track back into the very folder it's already sitting in
+    // isn't an import at all — without this check, the collision loop
+    // below sees a file already at the destination (itself) and
+    // "resolves" that the same way it would a genuine naming collision:
+    // by copying the source onto a new "<name> (1).ext", producing a
+    // pointless duplicate of the exact same file.
+    if (samePath(sourcePath, path.join(folderPath, baseName))) {
+      skipped.push(sourcePath);
+      continue;
+    }
+
     const ext = path.extname(baseName);
     const stem = path.basename(baseName, ext);
     let destName = baseName;

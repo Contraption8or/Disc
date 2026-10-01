@@ -36,6 +36,9 @@ export default function TitleBar({
   onTogglePanel,
   appearanceSettings,
   onSetAppearance,
+  musicFolderPath,
+  allTracks,
+  customFolders,
 }) {
   // The window-snap system (see electron/main.js) needs to know exactly
   // when a title-bar drag actually ends, not just "no movement for a
@@ -75,7 +78,11 @@ export default function TitleBar({
           openPanelIds={openPanelIds}
           onTogglePanel={onTogglePanel}
         />
-        <ProfilesMenu />
+        <ProfilesMenu
+          musicFolderPath={musicFolderPath}
+          allTracks={allTracks}
+          customFolders={customFolders}
+        />
         <div className="titlebar__divider" />
         <button
           className="titlebar__icon-button"
