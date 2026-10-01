@@ -255,6 +255,20 @@ export default function ThemeSwitcher({
                   )}
                 </>
               )}
+
+              <div className="theme-switcher__divider" />
+
+              <label className="theme-switcher__effect-row">
+                <span>Bouncy animations</span>
+                <input
+                  type="checkbox"
+                  checked={appearanceSettings.bouncyEnabled}
+                  onChange={(e) => onSetAppearance({ bouncyEnabled: e.target.checked })}
+                />
+              </label>
+              <p className="theme-switcher__effect-hint">
+                Gives buttons, menus, and dialogs a springy overshoot instead of a flat fade.
+              </p>
             </div>
           )}
 

@@ -1837,6 +1837,51 @@ ipcMain.on("disc:pomodoro-window-close", () => {
   pomodoroWindow?.close();
 });
 
+// Custom drag for the popup (see PomodoroPopup.jsx) — its header used to
+// be plain -webkit-app-region: drag, which hands the whole gesture to the
+// OS compositor with no way to read velocity back out of it, so "toss it
+// and it keeps sliding" needs the renderer driving position itself
+// instead. Takes a *relative* (dx, dy) rather than an absolute position:
+// the renderer never needs to know the popup's real position at all this
+// way (no bounds round-trip to seed a drag before it can start, which is
+// just one more thing to race against a fast pointerdown-then-move), it
+// only ever reports how far the pointer moved since the last sample —
+// this handler reads the window's actual current position itself, right
+// before nudging it, so it's always acting on the real thing rather than
+// a renderer-side copy that could drift. A fire-and-forget `send` rather
+// than an acked `invoke`, since this fires on every pointermove during
+// the drag and every animation frame during the post-release inertia
+// coast — round-tripping a reply at that frequency would only add
+// latency a drag can't afford.
+ipcMain.on("disc:move-pomodoro-window-by", (event, dx, dy) => {
+  if (!pomodoroWindow || pomodoroWindow.isDestroyed()) return;
+  const { x, y, width, height } = pomodoroWindow.getBounds();
+  const nx = x + dx;
+  const ny = y + dy;
+  // Keeps at least a corner of the popup reachable instead of letting a
+  // hard enough toss fling it fully off whichever display it's on with
+  // no way to get it back short of resetting panel layout.
+  const MIN_VISIBLE = 32;
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(nx + width / 2),
+    y: Math.round(ny + height / 2),
+  });
+  const { x: wx, y: wy, width: ww, height: wh } = display.workArea;
+  const clampedX = Math.min(Math.max(nx, wx - width + MIN_VISIBLE), wx + ww - MIN_VISIBLE);
+  const clampedY = Math.min(Math.max(ny, wy - height + MIN_VISIBLE), wy + wh - MIN_VISIBLE);
+  pomodoroWindow.setPosition(Math.round(clampedX), Math.round(clampedY));
+  // Tells the renderer which axis (if either) actually got stopped short
+  // by the screen edge, so its inertia loop (see startInertia in
+  // PomodoroPopup.jsx) can bounce instead of just silently sticking there
+  // for the rest of the coast — this only matters during inertia, not an
+  // active drag, so it's on the renderer to decide whether to act on it.
+  const hitX = clampedX !== nx;
+  const hitY = clampedY !== ny;
+  if (hitX || hitY) {
+    event.sender.send("disc:pomodoro-window-edge-hit", { hitX, hitY });
+  }
+});
+
 // Window controls — needed because the window is frameless so Disc can
 // draw its own title bar (themed to match the active theme, rather than
 // leaving an unthemed native title bar + menu bar on top of it).

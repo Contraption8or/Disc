@@ -53,6 +53,7 @@ import {
 import "./App.css";
 import "./appearance/appearance.css";
 import "./appearance/motion.css";
+import "./appearance/bouncy.css";
 
 const THEME_STORAGE_KEY = "disc.theme";
 const FOLDER_STORAGE_KEY = "disc.musicFolder";
@@ -327,6 +328,10 @@ export default function App() {
   });
 
   const dockApiRef = useRef(null);
+  // Holds each dockview group's bounding rect from just before the most
+  // recent drag-to-move, so the bouncy-animations FLIP slide (see
+  // onDockviewReady below) has a "before" to animate away from.
+  const groupRectsBeforeMoveRef = useRef(new Map());
   const musicFolderPathRef = useRef(musicFolderPath);
   musicFolderPathRef.current = musicFolderPath;
 
@@ -2356,6 +2361,121 @@ export default function App() {
       setOpenPanelIds(new Set(api.panels.map((p) => p.id)));
     }
     api.onDidLayoutChange(syncOpenPanels);
+
+    // Bouncy animations (see appearance/bouncy.css): when a drag-to-move
+    // finishes, every group whose position or size actually changed
+    // (the one the panel landed in, and any others the grid reflowed to
+    // make room) slides from where it used to be to where it ended up,
+    // instead of just snapping. This is a small FLIP (First-Last-Invert-
+    // Play): onWillDrop fires right before dockview mutates anything, so
+    // that's the "First" measurement; onDidMovePanel fires right after,
+    // once the DOM already reflects the new layout, for "Last". Only
+    // `transform` is ever touched — dockview's own layout math decides
+    // real position/size as always, this just visually eases into it —
+    // so it can't desync from or fight the real layout.
+    //
+    // A group mid-slide from a *previous* move still has a live transform
+    // on it when getBoundingClientRect() runs — transform affects the
+    // rect a browser reports, so measuring through one gives a position
+    // that's neither the real old spot nor the real new one. That
+    // mismatch is what produced the occasional glitchy "readjust" look:
+    // the next slide would invert from a contaminated reading. Settling
+    // any in-flight transform to its resting value right before every
+    // measurement (both "First" and "Last") keeps every measurement
+    // reading dockview's real, untransformed layout.
+    function settleTransform(el) {
+      if (el.style.transform) {
+        el.style.transition = "none";
+        el.style.transform = "";
+        void el.offsetWidth;
+      }
+    }
+    function snapshotGroupRects() {
+      const rects = new Map();
+      for (const group of api.groups) {
+        if (!group.element) continue;
+        settleTransform(group.element);
+        rects.set(group.element, group.element.getBoundingClientRect());
+      }
+      groupRectsBeforeMoveRef.current = rects;
+    }
+    function slideElement(el, dx, dy) {
+      // Reserve scrollbar-gutter space on this group's own scrollable
+      // panels only while it's actually sliding — a panel resizing
+      // mid-drag can briefly have scrollHeight > clientHeight before its
+      // virtualized rows catch up, popping a scrollbar in and shifting
+      // content left, then back out. Reserving the gutter the rest of the
+      // time instead (permanently) left a visible empty strip along every
+      // scrollable panel at all times, which looked worse than the
+      // glitch — so this is scoped to just the slide's duration.
+      const scrollables = el.querySelectorAll(
+        ".library-panel__body, .sidebar__list-area, .collections-panel__list-area, .details-panel, .pomodoro-panel"
+      );
+      scrollables.forEach((sc) => sc.classList.add("disc-scrollbar-reserve"));
+      el.style.transition = "none";
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      void el.offsetWidth; // force the inverted position to paint before easing out of it
+      el.style.transition = "transform 0.32s cubic-bezier(0.3, 1.18, 0.64, 1)";
+      el.style.transform = "";
+      el.addEventListener(
+        "transitionend",
+        () => {
+          scrollables.forEach((sc) => sc.classList.remove("disc-scrollbar-reserve"));
+          // A no-op if a later move has already reset this inline style
+          // (settleTransform above), so this can't clobber a newer,
+          // still-running slide.
+          if (el.style.transform === "") el.style.transition = "";
+        },
+        { once: true }
+      );
+    }
+    // Landed as a new tab in a group that didn't need to move or resize
+    // (dropping onto an existing group's tab strip, or any other drop
+    // where every group's rect comes out unchanged) — nothing above has
+    // anything to slide, which is why those drops looked like they had no
+    // animation at all. Give the panel's own content a quick settle-in
+    // instead, so a drop always plays *something*.
+    function playPanelLandedPop(panel) {
+      const el = panel?.view?.content?.element;
+      if (!el) return;
+      el.style.transition = "none";
+      el.style.opacity = "0.4";
+      el.style.transform = "scale(0.985)";
+      void el.offsetWidth;
+      el.style.transition =
+        "transform 0.22s cubic-bezier(0.3, 1.18, 0.64, 1), opacity 0.16s ease-out";
+      el.style.opacity = "";
+      el.style.transform = "";
+      el.addEventListener(
+        "transitionend",
+        () => {
+          if (el.style.transform === "") el.style.transition = "";
+        },
+        { once: true }
+      );
+    }
+    function playGroupSlide(event) {
+      const root = document.documentElement;
+      if (root.getAttribute("data-bouncy") !== "on") return;
+      if (root.getAttribute("data-reduce-motion") === "on") return;
+      const before = groupRectsBeforeMoveRef.current;
+      let slidAny = false;
+      for (const group of api.groups) {
+        const el = group.element;
+        const prev = el && before.get(el);
+        if (!prev) continue;
+        settleTransform(el);
+        const next = el.getBoundingClientRect();
+        const dx = prev.left - next.left;
+        const dy = prev.top - next.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+        slideElement(el, dx, dy);
+        slidAny = true;
+      }
+      if (!slidAny) playPanelLandedPop(event?.panel);
+    }
+    api.onWillDrop(snapshotGroupRects);
+    api.onDidMovePanel((event) => playGroupSlide(event));
 
     const existingPresets = loadLayoutPresets();
     const savedDefaultName = loadDefaultLayoutName();

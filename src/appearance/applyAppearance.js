@@ -11,6 +11,12 @@ export function applyAppearanceSettings(settings) {
   // attribute and disables transitions/animations app-wide.
   root.setAttribute("data-reduce-motion", settings.reduceMotion ? "on" : "off");
 
+  // Bouncy animations: a single attribute, read by bouncy.css, which
+  // re-times the same shared entrance keyframes and press/hover
+  // transitions motion.css already defines with a spring/overshoot easing
+  // curve instead of swapping in new keyframes — see bouncy.css for why.
+  root.setAttribute("data-bouncy", settings.bouncyEnabled ? "on" : "off");
+
   // Spill: a curated set of accent-colored elements and color dots/
   // swatches (see appearance.css) read this intensity variable for their
   // glow strength.

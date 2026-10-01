@@ -1,0 +1,107 @@
+/* Bouncy animations — an osu!-inspired spring feel. Every entrance
+   animation and interactive transition in the app already animates only
+   `transform`/`opacity` (see motion.css) and reuses a small shared set of
+   keyframes, so getting a springy overshoot everywhere doesn't need new
+   keyframes or touching ~30 component CSS files: swapping the easing
+   curve to one that overshoots past its end value (classic "ease-out
+   back") and giving it a touch more time to settle is enough, since the
+   keyframes themselves already animate to a clean resting transform.
+   Restricting this to transform/opacity (never background-color,
+   box-shadow, etc. — those stay on the calmer motion.css timing) keeps
+   every bounce on the GPU-composited path, so enabling this never adds
+   layout/paint work and can't introduce stutter on its own. */
+
+html[data-bouncy="on"] button,
+html[data-bouncy="on"] input,
+html[data-bouncy="on"] select,
+html[data-bouncy="on"] textarea,
+html[data-bouncy="on"] a,
+html[data-bouncy="on"] .track-row,
+html[data-bouncy="on"] .sidebar__item,
+html[data-bouncy="on"] .sidebar__color-dot,
+html[data-bouncy="on"] .collections-panel__item,
+html[data-bouncy="on"] .collections-panel__color-dot {
+  transition-duration: 0.15s, 0.15s, 0.15s, 0.15s, 0.4s, 0.2s;
+  transition-timing-function: ease, ease, ease, ease, cubic-bezier(0.34, 1.75, 0.64, 1), ease;
+}
+
+html[data-bouncy="on"] button:not(:disabled):active {
+  transform: scale(0.94);
+}
+
+/* Shared entrance animations — same keyframes, springier timing. */
+html[data-bouncy="on"] .command-palette,
+html[data-bouncy="on"] .confirm-modal,
+html[data-bouncy="on"] .health-modal,
+html[data-bouncy="on"] .settings-modal,
+html[data-bouncy="on"] .shortcuts-modal,
+html[data-bouncy="on"] .tag-manager,
+html[data-bouncy="on"] .theme-creator {
+  animation-duration: 0.45s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform;
+}
+
+html[data-bouncy="on"] .color-picker,
+html[data-bouncy="on"] .compact-view__volume-popover,
+html[data-bouncy="on"] .context-menu,
+html[data-bouncy="on"] .dropdown__menu,
+html[data-bouncy="on"] .folder-context-menu,
+html[data-bouncy="on"] .folder-create-menu,
+html[data-bouncy="on"] .layout-context-menu,
+html[data-bouncy="on"] .layout-presets__menu,
+html[data-bouncy="on"] .profiles-menu__dropdown,
+html[data-bouncy="on"] .tag-assign-menu,
+html[data-bouncy="on"] .tag-context-menu,
+html[data-bouncy="on"] .tag-create-menu,
+html[data-bouncy="on"] .theme-context-menu,
+html[data-bouncy="on"] .tag-manager__color-popover,
+html[data-bouncy="on"] .tag-manager__merge-popover,
+html[data-bouncy="on"] .theme-switcher__restart-banner,
+html[data-bouncy="on"] .theme-switcher__menu,
+html[data-bouncy="on"] .track-context-menu,
+html[data-bouncy="on"] .windows-menu__dropdown {
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.34, 1.65, 0.64, 1);
+  will-change: transform;
+}
+
+html[data-bouncy="on"] .batch-bar,
+html[data-bouncy="on"] .undo-toast,
+html[data-bouncy="on"] .sidebar__search-row {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.34, 1.65, 0.64, 1);
+  will-change: transform;
+}
+
+/* Panel-move slide: handled entirely in JS (see onDockviewReady in
+   App.jsx) since it needs actual before/after pixel positions per group,
+   not something a CSS rule can express — it sets `transition` and
+   `transform` directly on each affected .groupview element for the
+   duration of that one slide, then clears both. This one rule is the CSS
+   half of it: promoting every group to its own GPU layer up front, all
+   the time bouncy is on, rather than only the moment a slide starts. A
+   layer created for the first time exactly when a transform is first
+   applied can show a blank frame while the browser paints it — pre-
+   promoting here means that paint already happened long before any drag,
+   so a slide can't flash. */
+html[data-bouncy="on"] .groupview {
+  will-change: transform;
+}
+
+/* Scrollbar-gutter reservation, toggled on/off in JS only for the
+   duration of a group's slide (see playGroupSlide in App.jsx) — a panel
+   resizing mid-drag can briefly have scrollHeight > clientHeight before
+   its virtualized rows catch up, popping a scrollbar in and shifting
+   every row's content left, then back out once it settles. Reserving the
+   gutter *permanently* instead (keeping this rule on at all times) fixed
+   that but left a visible empty strip along scrollable panels all the
+   time, which looked worse than the glitch it replaced — so this is only
+   ever applied transiently. */
+.disc-scrollbar-reserve {
+  scrollbar-gutter: stable;
+}
+
+/* Reduce motion always wins over bouncy — its !important rules in
+   appearance.css apply after this file regardless of source order, so no
+   extra override is needed here. */

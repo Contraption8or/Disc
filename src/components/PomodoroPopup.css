@@ -16,6 +16,18 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
   user-select: none;
+  /* Dragging is handled in JS (see handlePopupPointerDown in
+     PomodoroPopup.jsx) instead of -webkit-app-region: drag, so it can
+     track velocity and give the window some toss/momentum on release —
+     something the OS-native drag region has no hook for. Applied to the
+     whole popup, not just the header, so any empty background (the ring,
+     the gaps around it) is grabbable too; only real controls opt back
+     out, in that same handler. */
+  cursor: grab;
+}
+
+.pomodoro-popup:active {
+  cursor: grabbing;
 }
 
 .pomodoro-popup__header {
@@ -24,7 +36,6 @@ body {
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
-  -webkit-app-region: drag;
 }
 
 .pomodoro-popup__title {

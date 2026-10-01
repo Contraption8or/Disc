@@ -231,3 +231,10 @@
   gap: 4px;
   cursor: pointer;
 }
+
+.theme-switcher__effect-hint {
+  margin: -2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
