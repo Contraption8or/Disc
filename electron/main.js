@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, createReadStream } from "node:fs";
+import { watch, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, createReadStream, createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
@@ -9,6 +9,8 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { createRequire } from "node:module";
 import AdmZip from "adm-zip";
+import archiver from "archiver";
+import yauzl from "yauzl";
 
 // mouse-state is a Windows-only native addon (CommonJS, so it needs
 // createRequire from this ESM file) — see native/mouse-state/mouse_state.cc
@@ -1579,6 +1581,24 @@ ipcMain.handle("disc:export-profile-to-file", async (_event, { profileName, data
 // every trackId-keyed profile field (tags, notes, sections, favorites,
 // collections) to match wherever the music actually ends up getting
 // extracted to.
+//
+// Streams the archive straight to disk (archiver) rather than building it
+// in memory (AdmZip): AdmZip reads every file whole into a Buffer and then
+// deflates them all synchronously on the main process, which for a library
+// of several hundred tracks meant gigabytes of RAM and a frozen — then
+// crashed — app. Audio is already compressed, so entries are STOREd
+// (copied, not re-deflated) too, which is also what makes this fast.
+// Progress goes to the renderer (and the taskbar icon) as it goes.
+let lastZipProgressAt = 0;
+function sendZipProgress(phase, done, total, { force = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const now = Date.now();
+  if (!force && now - lastZipProgressAt < 100) return;
+  lastZipProgressAt = now;
+  mainWindow.webContents.send("disc:profile-zip-progress", { phase, done, total });
+  mainWindow.setProgressBar(total > 0 && done < total ? done / total : -1);
+}
+
 ipcMain.handle("disc:export-profile-with-music", async (_event, { profileName, data, tracks }) => {
   if (!mainWindow) return { success: false };
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -1587,36 +1607,66 @@ ipcMain.handle("disc:export-profile-with-music", async (_event, { profileName, d
     filters: [{ name: "Disc Profile (with music)", extensions: ["zip"] }],
   });
   if (result.canceled || !result.filePath) return { success: false, cancelled: true };
+  const destPath = result.filePath;
   try {
-    const zip = new AdmZip();
-    const manifest = [];
+    const entries = [];
     for (const t of tracks || []) {
       if (!t?.trackKey || !t?.filePath) continue;
+      // Skip a file that vanished/became unreadable rather than failing
+      // the whole archive.
+      try {
+        const st = await fs.stat(t.filePath);
+        if (!st.isFile()) continue;
+      } catch {
+        continue;
+      }
       // "folder:Name/..." isn't a safe path to extract on Windows later
       // (a bare colon is a reserved path character there) — "folder/Name/..."
       // carries the same information without that problem.
       const zipRelPath = t.trackKey.startsWith("folder:")
         ? `folder/${t.trackKey.slice(7)}`
         : t.trackKey;
-      const zipDir = path.posix.dirname(`music/${zipRelPath}`);
-      const zipName = path.posix.basename(zipRelPath);
-      try {
-        zip.addLocalFile(t.filePath, zipDir === "." ? "" : zipDir, zipName);
-        manifest.push({ originalPath: t.filePath, zipPath: zipRelPath });
-      } catch {
-        // Skip a file that vanished/became unreadable mid-export rather
-        // than failing the whole archive.
-      }
+      entries.push({ filePath: t.filePath, zipRelPath });
     }
-    zip.addFile(
-      "profile.json",
-      Buffer.from(JSON.stringify({ profileName, savedAt: new Date().toISOString(), data }, null, 2))
-    );
-    zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2)));
-    zip.writeZip(result.filePath);
-    return { success: true, filePath: result.filePath, trackCount: manifest.length };
+    const manifest = entries.map((e) => ({ originalPath: e.filePath, zipPath: e.zipRelPath }));
+    const total = entries.length;
+
+    await new Promise((resolve, reject) => {
+      const output = createWriteStream(destPath);
+      const archive = archiver("zip", { store: true });
+      let done = 0;
+      output.on("close", resolve);
+      output.on("error", reject);
+      archive.on("error", reject);
+      // A file that disappears between the stat above and being read
+      // surfaces as an ENOENT warning — skip it (import already ignores
+      // manifest entries with no matching file) but fail on anything else.
+      archive.on("warning", (err) => {
+        if (err.code !== "ENOENT") reject(err);
+      });
+      archive.on("entry", (entry) => {
+        if (!entry.name.startsWith("music/")) return;
+        done += 1;
+        sendZipProgress("export", done, total);
+      });
+      archive.pipe(output);
+      archive.append(
+        Buffer.from(JSON.stringify({ profileName, savedAt: new Date().toISOString(), data }, null, 2)),
+        { name: "profile.json" }
+      );
+      archive.append(Buffer.from(JSON.stringify(manifest, null, 2)), { name: "manifest.json" });
+      for (const e of entries) {
+        archive.file(e.filePath, { name: `music/${e.zipRelPath}`, store: true });
+      }
+      sendZipProgress("export", 0, total, { force: true });
+      archive.finalize();
+    });
+    return { success: true, filePath: destPath, trackCount: total };
   } catch (err) {
+    await fs.rm(destPath, { force: true }).catch(() => {});
     return { success: false, error: err.message };
+  } finally {
+    sendZipProgress("export", 0, 0, { force: true });
   }
 });
 
@@ -1693,61 +1743,152 @@ function remapTrackIdsInProfileData(data, pathMap) {
 // field to match. Returns the exact same shape as the plain-.json import
 // path, so the renderer doesn't need to know or care which kind of file
 // it actually picked.
-async function importProfileZip(zipFilePath) {
-  const zip = new AdmZip(zipFilePath);
-  const profileEntry = zip.getEntry("profile.json");
-  if (!profileEntry) return { success: false, error: "Not a valid Disc profile archive" };
-  const parsed = JSON.parse(zip.readAsText(profileEntry));
-  if (!parsed.data) return { success: false, error: "Not a valid Disc profile archive" };
-
-  const manifestEntry = zip.getEntry("manifest.json");
-  const manifest = manifestEntry ? JSON.parse(zip.readAsText(manifestEntry)) : [];
-  if (manifest.length === 0) {
-    // No music actually bundled (every track vanished before export, or
-    // this archive just never had any) — nothing to extract or remap,
-    // same outcome as a plain .json import.
-    return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
-  }
-
-  if (!mainWindow) return { success: false, error: "No window to prompt for a destination" };
-  const destResult = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose where to put the imported music",
-    properties: ["openDirectory", "createDirectory"],
+//
+// Reads the archive with yauzl and streams each file to disk one at a
+// time, instead of AdmZip's load-the-whole-zip-into-memory approach —
+// same reason as the export side (a library of several hundred tracks
+// can be gigabytes, which AdmZip can't even hold in a single Buffer).
+// Only the zip's table of contents plus the two small JSON files are ever
+// held in memory.
+function openZip(filePath) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(filePath, { lazyEntries: true, autoClose: false }, (err, zf) =>
+      err ? reject(err) : resolve(zf)
+    );
   });
-  if (destResult.canceled || destResult.filePaths.length === 0) {
-    return { success: false, cancelled: true };
-  }
-  const destRoot = destResult.filePaths[0];
+}
 
-  const pathMap = new Map();
-  const linkedFolderNames = new Set();
-  for (const entry of manifest) {
-    const zipPath = entry.zipPath; // "main/..." or "folder/Name/..."
-    let newPath;
-    if (zipPath.startsWith("folder/")) {
-      const rest = zipPath.slice(7);
-      const slashIndex = rest.indexOf("/");
-      const folderName = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
-      const relPart = slashIndex === -1 ? "" : rest.slice(slashIndex + 1);
-      linkedFolderNames.add(folderName);
-      newPath = path.join(destRoot, folderName, ...relPart.split("/").filter(Boolean));
-    } else if (zipPath.startsWith("main/")) {
-      newPath = path.join(destRoot, ...zipPath.slice(5).split("/").filter(Boolean));
-    } else {
-      continue;
-    }
-    const zipEntry = zip.getEntry(`music/${zipPath}`);
-    if (!zipEntry) continue;
-    try {
-      const dir = path.dirname(newPath);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      await fs.writeFile(newPath, zip.readFile(zipEntry));
-      pathMap.set(entry.originalPath, newPath);
-    } catch {
-      // Skip a file that fails to extract rather than failing the whole import.
-    }
-  }
+function indexZipEntries(zf) {
+  return new Promise((resolve, reject) => {
+    const entries = new Map();
+    zf.on("entry", (entry) => {
+      entries.set(entry.fileName, entry);
+      zf.readEntry();
+    });
+    zf.on("end", () => resolve(entries));
+    zf.on("error", reject);
+    zf.readEntry();
+  });
+}
 
+function openZipEntryStream(zf, entry) {
+  return new Promise((resolve, reject) => {
+    zf.openReadStream(entry, (err, stream) => (err ? reject(err) : resolve(stream)));
+  });
+}
+
+// Event-based on purpose (not `for await` / stream.pipeline): yauzl's
+// read streams for stored (uncompressed) entries — which is every entry
+// our own export writes — never settle under async iteration or
+// pipeline(), so those would hang the import forever. Plain
+// data/end/finish events work reliably.
+async function readZipEntryText(zf, entry) {
+  const stream = await openZipEntryStream(zf, entry);
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    stream.on("error", reject);
+  });
+}
+
+function pipeZipEntryToFile(stream, filePath) {
+  return new Promise((resolve, reject) => {
+    const out = createWriteStream(filePath);
+    stream.on("error", (err) => {
+      out.destroy();
+      reject(err);
+    });
+    out.on("error", reject);
+    out.on("finish", resolve);
+    stream.pipe(out);
+  });
+}
+
+// Joins untrusted archive path segments under root, refusing anything
+// that would land outside it (a crafted "../" entry).
+function safeJoinUnder(root, parts) {
+  const clean = parts.filter((p) => p && p !== "." && p !== "..");
+  const full = path.join(root, ...clean);
+  const rel = path.relative(root, full);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return full;
+}
+
+async function importProfileZip(zipFilePath) {
+  let zf;
+  try {
+    zf = await openZip(zipFilePath);
+    const entries = await indexZipEntries(zf);
+    const profileEntry = entries.get("profile.json");
+    if (!profileEntry) return { success: false, error: "Not a valid Disc profile archive" };
+    const parsed = JSON.parse(await readZipEntryText(zf, profileEntry));
+    if (!parsed.data) return { success: false, error: "Not a valid Disc profile archive" };
+
+    const manifestEntry = entries.get("manifest.json");
+    const manifest = manifestEntry ? JSON.parse(await readZipEntryText(zf, manifestEntry)) : [];
+    if (manifest.length === 0) {
+      // No music actually bundled (every track vanished before export, or
+      // this archive just never had any) — nothing to extract or remap,
+      // same outcome as a plain .json import.
+      return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
+    }
+
+    if (!mainWindow) return { success: false, error: "No window to prompt for a destination" };
+    const destResult = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose where to put the imported music",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (destResult.canceled || destResult.filePaths.length === 0) {
+      return { success: false, cancelled: true };
+    }
+    const destRoot = destResult.filePaths[0];
+
+    const pathMap = new Map();
+    const linkedFolderNames = new Set();
+    const total = manifest.length;
+    let processed = 0;
+    sendZipProgress("import", 0, total, { force: true });
+    for (const entry of manifest) {
+      processed += 1;
+      const zipPath = entry.zipPath; // "main/..." or "folder/Name/..."
+      let newPath;
+      let folderName = null;
+      if (zipPath.startsWith("folder/")) {
+        const rest = zipPath.slice(7);
+        const slashIndex = rest.indexOf("/");
+        folderName = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
+        const relPart = slashIndex === -1 ? "" : rest.slice(slashIndex + 1);
+        newPath = safeJoinUnder(destRoot, [folderName, ...relPart.split("/")]);
+      } else if (zipPath.startsWith("main/")) {
+        newPath = safeJoinUnder(destRoot, zipPath.slice(5).split("/"));
+      } else {
+        continue;
+      }
+      const zipEntry = entries.get(`music/${zipPath}`);
+      if (!newPath || !zipEntry) continue;
+      try {
+        await fs.mkdir(path.dirname(newPath), { recursive: true });
+        const stream = await openZipEntryStream(zf, zipEntry);
+        await pipeZipEntryToFile(stream, newPath);
+        pathMap.set(entry.originalPath, newPath);
+        if (folderName) linkedFolderNames.add(folderName);
+      } catch {
+        // Skip a file that fails to extract rather than failing the whole import.
+      }
+      sendZipProgress("import", processed, total);
+    }
+
+    return finishZipImport(parsed, pathMap, linkedFolderNames, destRoot);
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    zf?.close();
+    sendZipProgress("import", 0, 0, { force: true });
+  }
+}
+
+function finishZipImport(parsed, pathMap, linkedFolderNames, destRoot) {
   const data = remapTrackIdsInProfileData(parsed.data, pathMap);
   data["disc.musicFolder"] = JSON.stringify(destRoot);
   if (data["disc.customFolders"]) {

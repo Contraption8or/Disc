@@ -25,6 +25,10 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   const [status, setStatus] = useState(""); // brief inline feedback, e.g. "Exported"
   const [exportingMusic, setExportingMusic] = useState(false);
   const [importing, setImporting] = useState(false);
+  // { phase: "export" | "import", done, total } while a with-music zip is
+  // being written or extracted (see sendZipProgress in electron/main.js),
+  // so a big library reads as "Zipping 212/600…" rather than looking stuck.
+  const [zipProgress, setZipProgress] = useState(null);
   // The built-in Default profile (see resetProfileData) is always there, but
   // its row can be tucked away for anyone who'd rather not see it.
   const [hideDefault, setHideDefault] = useState(() => {
@@ -56,6 +60,12 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [editingFileName, creating]);
+
+  useEffect(() => {
+    return window.disc?.onProfileZipProgress?.((p) => {
+      setZipProgress(p.total > 0 ? p : null);
+    });
+  }, []);
 
   useEffect(() => {
     if (creating) createInputRef.current?.focus();
@@ -357,7 +367,11 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
             title="Bundles every track Disc currently knows about into the exported file — the person importing it won't need any of the same music already on their machine."
           >
             <Icon name="musicNote" size={12} style={{ marginRight: 6 }} />
-            {exportingMusic ? "Zipping…" : "Export Current (with Music)…"}
+            {exportingMusic
+              ? zipProgress?.phase === "export"
+                ? `Zipping ${zipProgress.done}/${zipProgress.total}…`
+                : "Zipping…"
+              : "Export Current (with Music)…"}
           </button>
           <button
             className="profiles-menu__option profiles-menu__option--action"
@@ -365,7 +379,11 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
             disabled={importing}
           >
             <Icon name="folder" size={12} style={{ marginRight: 6 }} />
-            {importing ? "Importing…" : "Import…"}
+            {importing
+              ? zipProgress?.phase === "import"
+                ? `Importing ${zipProgress.done}/${zipProgress.total}…`
+                : "Importing…"
+              : "Import…"}
           </button>
 
           {hideDefault && (

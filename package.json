@@ -1,7 +1,7 @@
 {
   "name": "disc",
   "productName": "Disc",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "A local mp3 library manager for video editors, built to drag straight into Premiere Pro.",
   "private": true,
   "main": "electron/main.js",
@@ -15,11 +15,13 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "archiver": "^5.3.2",
     "dockview": "^1.16.0",
     "lamejs": "^1.2.1",
     "mouse-state": "file:native/mouse-state",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "yauzl": "^2.10.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -47,7 +49,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "electron/assets/disc-icon.ico"

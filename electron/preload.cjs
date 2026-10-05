@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld("disc", {
     ipcRenderer.invoke("disc:toggle-pomodoro-always-on-top", shouldPin),
   closePomodoroWindow: () => ipcRenderer.send("disc:pomodoro-window-close"),
   movePomodoroWindowBy: (dx, dy) => ipcRenderer.send("disc:move-pomodoro-window-by", dx, dy),
+  onProfileZipProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("disc:profile-zip-progress", listener);
+    return () => ipcRenderer.removeListener("disc:profile-zip-progress", listener);
+  },
   onPomodoroWindowEdgeHit: (callback) => {
     const listener = (_event, hit) => callback(hit);
     ipcRenderer.on("disc:pomodoro-window-edge-hit", listener);
