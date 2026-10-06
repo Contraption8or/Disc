@@ -4,6 +4,7 @@ import { computeWaveform, getCachedWaveform } from "../audio/waveform.js";
 import { downsamplePeaks } from "../audio/downsamplePeaks.js";
 import { getSectionDragPath, prepareSectionDrag } from "../audio/sectionDrag.js";
 import { useElementWidth } from "../hooks/useElementWidth.js";
+import { useVisualTick } from "../hooks/useVisualTick.js";
 import { formatSize, formatDuration, stripExtension } from "../utils/format.js";
 import TrackContextMenu from "./TrackContextMenu.jsx";
 import Icon from "./Icon.jsx";
@@ -138,24 +139,16 @@ function TrackRow({
   // paused), drive the progress overlay directly via rAF (not React
   // state) so it doesn't re-render on every frame.
   useEffect(() => {
-    if (isVideo) return;
-    if (!isActive) {
-      if (progressRef.current) progressRef.current.style.width = "0%";
-      return;
-    }
-    if (!isPlaying) return; // paused: leave the bar exactly where it is
+    if (!isVideo && !isActive && progressRef.current) progressRef.current.style.width = "0%";
+  }, [isActive, isVideo]);
 
-    let raf;
+  // Paused: leave the bar exactly where it is. See useVisualTick for why
+  // this slows down while Disc isn't the focused window.
+  useVisualTick(() => {
     const trackDuration = waveformData?.duration || duration || 0;
-    function tick() {
-      const t = getCurrentTime();
-      const pct = trackDuration > 0 ? Math.min(100, (t / trackDuration) * 100) : 0;
-      if (progressRef.current) progressRef.current.style.width = `${pct}%`;
-      raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [isActive, isPlaying, waveformData, duration, getCurrentTime, isVideo]);
+    const pct = trackDuration > 0 ? Math.min(100, (getCurrentTime() / trackDuration) * 100) : 0;
+    if (progressRef.current) progressRef.current.style.width = `${pct}%`;
+  }, !isVideo && isActive && isPlaying);
 
   function handlePlayClick(e) {
     if (isMissing || isVideo) return;

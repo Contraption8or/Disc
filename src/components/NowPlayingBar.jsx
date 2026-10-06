@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
+import { useVisualTick } from "../hooks/useVisualTick.js";
 import { stripExtension } from "../utils/format.js";
 import Icon from "./Icon.jsx";
 import "./NowPlayingBar.css";
@@ -25,17 +26,13 @@ export default function NowPlayingBar() {
   const progressRef = useRef(null);
   const track = allTracks.find((t) => t.id === currentTrackId) || null;
 
-  useEffect(() => {
-    if (!track || !isPlaying) return; // paused: leave the bar exactly where it is
-    let raf;
-    function tick() {
-      const pct = duration > 0 ? Math.min(100, (getCurrentTime() / duration) * 100) : 0;
-      if (progressRef.current) progressRef.current.style.width = `${pct}%`;
-      raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [track, isPlaying, duration, getCurrentTime]);
+  // Paused: leave the bar exactly where it is. Driven directly (not React
+  // state) so it doesn't re-render per frame; see useVisualTick for why it
+  // slows down while Disc isn't the focused window.
+  useVisualTick(() => {
+    const pct = duration > 0 ? Math.min(100, (getCurrentTime() / duration) * 100) : 0;
+    if (progressRef.current) progressRef.current.style.width = `${pct}%`;
+  }, Boolean(track) && isPlaying);
 
   if (!track) return null;
 
