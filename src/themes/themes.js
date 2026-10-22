@@ -11,6 +11,7 @@
 // hidden outright, same graceful-degrade spirit as the rest of the app.
 export const THEMES = [
   { id: "premiere-dark", label: "Gray", swatch: "#1b1b1f" },
+  { id: "mono", label: "Mono", swatch: "#ffffff" },
   { id: "paper", label: "Light Mode", swatch: "#f3efe7" },
   { id: "hianime", label: "HiAnime", swatch: "#8b5cf6" },
   { id: "sunset", label: "Sunset", swatch: "#F64668", requiresAcrylic: true },

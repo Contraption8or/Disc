@@ -39,6 +39,7 @@ export default function TitleBar({
   musicFolderPath,
   allTracks,
   customFolders,
+  getLiveLayout,
 }) {
   // The window-snap system (see electron/main.js) needs to know exactly
   // when a title-bar drag actually ends, not just "no movement for a
@@ -82,6 +83,7 @@ export default function TitleBar({
           musicFolderPath={musicFolderPath}
           allTracks={allTracks}
           customFolders={customFolders}
+          getLiveLayout={getLiveLayout}
         />
         <div className="titlebar__divider" />
         <button

@@ -41,11 +41,33 @@ export const PROFILE_KEYS = [
 // plain object — missing keys are simply omitted rather than included
 // as null/undefined, so applying this later doesn't wipe out something
 // the exporting install genuinely never had set.
-export function collectProfileData() {
+//
+// The panel arrangement you're looking at right now (dragged, resized,
+// closed panels) only lives inside dockview at runtime — it never reaches
+// localStorage unless you explicitly save a layout preset, so collecting
+// keys alone silently left it out of every profile. Pass `liveLayout`
+// (dockview's api.toJSON()) and it's folded in as a preset made this
+// profile's default layout: switching to the profile later then restores
+// it through the same "default layout" startup path Disc already has, so
+// there's no separate restore step to keep in sync.
+export const PROFILE_LAYOUT_PRESET_NAME = "Saved with profile";
+
+export function collectProfileData({ liveLayout } = {}) {
   const data = {};
   for (const key of PROFILE_KEYS) {
     const value = localStorage.getItem(key);
     if (value !== null) data[key] = value;
+  }
+  if (liveLayout) {
+    let presets = {};
+    try {
+      presets = JSON.parse(data["disc.layoutPresets"] || "{}") || {};
+    } catch {
+      presets = {};
+    }
+    presets[PROFILE_LAYOUT_PRESET_NAME] = liveLayout;
+    data["disc.layoutPresets"] = JSON.stringify(presets);
+    data["disc.defaultLayoutName"] = PROFILE_LAYOUT_PRESET_NAME;
   }
   return data;
 }

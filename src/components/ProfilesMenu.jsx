@@ -14,7 +14,7 @@ import "./ProfilesMenu.css";
 // this renders inside TitleBar, which sits outside <DiscContext.Provider>
 // (the provider only wraps the dockview panel area), same reason every
 // other thing TitleBar needs is already threaded through as a prop.
-export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders }) {
+export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders, getLiveLayout }) {
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [creating, setCreating] = useState(false);
@@ -86,7 +86,7 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   async function handleSaveCurrentAsNew(name) {
     const trimmed = name.trim();
     if (!trimmed || !window.disc) return;
-    const data = collectProfileData();
+    const data = collectProfileData({ liveLayout: getLiveLayout?.() });
     const result = await window.disc.saveProfile(trimmed, data);
     if (result?.success) {
       flashStatus("Saved");
@@ -129,7 +129,7 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   // overwrite instead of creating a new profile.
   async function handleUpdateProfile(fileName, profileName) {
     if (!window.disc) return;
-    const data = collectProfileData();
+    const data = collectProfileData({ liveLayout: getLiveLayout?.() });
     const result = await window.disc.saveProfile(profileName, data, fileName);
     if (result?.success) {
       flashStatus("Updated");
@@ -155,7 +155,7 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   async function handleExportCurrent() {
     if (!window.disc) return;
     const name = `Disc Profile ${new Date().toLocaleDateString()}`;
-    const data = collectProfileData();
+    const data = collectProfileData({ liveLayout: getLiveLayout?.() });
     const result = await window.disc.exportProfileToFile(name, data);
     if (result?.success) flashStatus("Exported");
   }
@@ -172,7 +172,7 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
     setExportingMusic(true);
     try {
       const name = `Disc Profile ${new Date().toLocaleDateString()}`;
-      const data = collectProfileData();
+      const data = collectProfileData({ liveLayout: getLiveLayout?.() });
       const tracks = allTracks
         .map((t) => ({
           filePath: t.filePath,

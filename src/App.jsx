@@ -2353,6 +2353,17 @@ export default function App() {
   // panel might get added/removed.
   const [openPanelIds, setOpenPanelIds] = useState(() => new Set());
 
+  // The panel arrangement as it is right now, for saving into a profile
+  // (see collectProfileData) — dockview's own api.toJSON(), or null if the
+  // dock isn't up yet.
+  const getLiveLayout = useCallback(() => {
+    try {
+      return dockApiRef.current?.toJSON() ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const onDockviewReady = useCallback((event) => {
     const api = event.api;
     dockApiRef.current = api;
@@ -2960,6 +2971,7 @@ export default function App() {
           musicFolderPath={musicFolderPath}
           allTracks={allTracks}
           customFolders={customFolders}
+          getLiveLayout={getLiveLayout}
         />
       )}
       <div className="app__dock">

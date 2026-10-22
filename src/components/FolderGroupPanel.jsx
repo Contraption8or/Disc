@@ -7,7 +7,7 @@ import Icon from "./Icon.jsx";
 import { useDisc } from "../context/DiscContext.jsx";
 import "./Sidebar.css";
 
-const SYSTEM_FOLDERS = [{ id: "favorites", name: "Favorites", system: true, color: "#ff6fa5" }];
+const SYSTEM_FOLDERS = [{ id: "favorites", name: "Favorites", system: true, color: "var(--favorite)" }];
 
 const MENU_WIDTH = 200;
 const MENU_HEIGHT = 90;
