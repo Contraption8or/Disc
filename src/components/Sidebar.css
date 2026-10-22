@@ -169,7 +169,7 @@
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 7px 8px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
