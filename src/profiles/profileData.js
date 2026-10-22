@@ -95,6 +95,32 @@ export function resetProfileData() {
   }
 }
 
+// A user-chosen replacement for what the built-in Default profile does.
+// By default, picking "Default" resets Disc to factory settings; after
+// "Set Current as Default" it instead restores this saved snapshot (same
+// shape as collectProfileData's output). Stored under its own key —
+// deliberately NOT in PROFILE_KEYS, so resetting/switching profiles never
+// wipes it, and it never gets bundled into an exported profile.
+const CUSTOM_DEFAULT_KEY = "disc.customDefaultProfile";
+
+export function loadCustomDefault() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_DEFAULT_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCustomDefault(data) {
+  localStorage.setItem(CUSTOM_DEFAULT_KEY, JSON.stringify(data));
+}
+
+export function clearCustomDefault() {
+  localStorage.removeItem(CUSTOM_DEFAULT_KEY);
+}
+
 // Whether the Default profile row is hidden from the Profiles menu. A plain
 // UI preference — deliberately NOT in PROFILE_KEYS, so switching profiles
 // (or resetting to Default) never flips it back.

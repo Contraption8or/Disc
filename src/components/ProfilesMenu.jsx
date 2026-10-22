@@ -3,6 +3,9 @@ import {
   collectProfileData,
   applyProfileData,
   resetProfileData,
+  loadCustomDefault,
+  saveCustomDefault,
+  clearCustomDefault,
   HIDE_DEFAULT_PROFILE_KEY,
 } from "../profiles/profileData.js";
 import { getTrackKey } from "../sync/trackKey.js";
@@ -29,6 +32,9 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   // being written or extracted (see sendZipProgress in electron/main.js),
   // so a big library reads as "Zipping 212/600…" rather than looking stuck.
   const [zipProgress, setZipProgress] = useState(null);
+  // Whether "Default" restores a saved setup (see Set Current as Default)
+  // instead of resetting to factory settings.
+  const [hasCustomDefault, setHasCustomDefault] = useState(() => loadCustomDefault() !== null);
   // The built-in Default profile (see resetProfileData) is always there, but
   // its row can be tucked away for anyone who'd rather not see it.
   const [hideDefault, setHideDefault] = useState(() => {
@@ -109,7 +115,12 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
   async function confirmSwitch() {
     if (!switchTarget) return;
     if (switchTarget.isDefault) {
+      // Clear everything first either way, so keys the saved default
+      // doesn't have fall back to defaults rather than keeping whatever
+      // the current setup had.
       resetProfileData();
+      const custom = loadCustomDefault();
+      if (custom) applyProfileData(custom);
       window.location.reload();
       return;
     }
@@ -135,6 +146,18 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
       flashStatus("Updated");
       refreshProfiles();
     }
+  }
+
+  function handleSetCurrentAsDefault() {
+    saveCustomDefault(collectProfileData({ liveLayout: getLiveLayout?.() }));
+    setHasCustomDefault(true);
+    flashStatus("Set as default");
+  }
+
+  function handleRestoreFactoryDefault() {
+    clearCustomDefault();
+    setHasCustomDefault(false);
+    flashStatus("Default restored to factory");
   }
 
   async function handleRename(fileName, newName) {
@@ -254,11 +277,26 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
                 <button
                   className="profiles-menu__option"
                   onClick={() => setSwitchTarget({ isDefault: true, profileName: "Default" })}
-                  title="Reset Disc to its factory defaults"
+                  title={
+                    hasCustomDefault
+                      ? "Restore the setup you set as default"
+                      : "Reset Disc to its factory defaults"
+                  }
                 >
                   Default
-                  <span className="profiles-menu__badge">Built-in</span>
+                  <span className="profiles-menu__badge">
+                    {hasCustomDefault ? "Custom" : "Built-in"}
+                  </span>
                 </button>
+                {hasCustomDefault && (
+                  <button
+                    className="profiles-menu__icon-btn"
+                    title="Go back to the factory default"
+                    onClick={handleRestoreFactoryDefault}
+                  >
+                    <Icon name="undo" size={12} />
+                  </button>
+                )}
                 <button
                   className="profiles-menu__icon-btn"
                   title="Hide the Default profile"
@@ -350,6 +388,14 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
               Save Current as New Profile
             </button>
           )}
+          <button
+            className="profiles-menu__option profiles-menu__option--action"
+            onClick={handleSetCurrentAsDefault}
+            title="Make the Default profile restore your current setup — settings, folders, theme, and panel layout — instead of factory settings."
+          >
+            <Icon name="starOutline" size={12} style={{ marginRight: 6 }} />
+            Set Current as Default
+          </button>
 
           <div className="profiles-menu__divider" />
 
@@ -405,7 +451,9 @@ export default function ProfilesMenu({ musicFolderPath, allTracks, customFolders
           title="Switch profile"
           message={
             switchTarget.isDefault
-              ? "Reset Disc to its factory defaults? Your current theme, layout, settings, folders, and tags will be cleared — save them as a profile first if you want to keep them. Disc will reload right after."
+              ? hasCustomDefault
+                ? "Switch to your default setup? Your current settings and folders will be replaced with the setup you set as default — save them as a profile first if you want to keep them. Disc will reload right after."
+                : "Reset Disc to its factory defaults? Your current theme, layout, settings, folders, and tags will be cleared — save them as a profile first if you want to keep them. Disc will reload right after."
               : `Switch to "${switchTarget.profileName}"? Your current settings and folders will be replaced with what's saved in that profile. Disc will reload right after.`
           }
           confirmLabel="Switch"
