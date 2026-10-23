@@ -1,7 +1,7 @@
 .now-playing {
   flex-shrink: 0;
   background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-color);
 }
 
 .now-playing__progress-track {

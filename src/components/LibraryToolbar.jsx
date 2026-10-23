@@ -1,17 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useDisc } from "../context/DiscContext.jsx";
-import TagCreateMenu from "./TagCreateMenu.jsx";
-import Dropdown from "./Dropdown.jsx";
 import Icon from "./Icon.jsx";
 import "./LibraryToolbar.css";
-
-const SORT_OPTIONS = [
-  { value: "folder", label: "Folder order" },
-  { value: "name", label: "Name" },
-  { value: "dateAdded", label: "Date added" },
-  { value: "duration", label: "Duration" },
-  { value: "size", label: "Size" },
-];
 
 export default function LibraryToolbar({
   query,
@@ -20,32 +9,20 @@ export default function LibraryToolbar({
   onPlayAll,
   onShufflePlay,
   playDisabled,
-  sortKey,
-  onSortKeyChange,
-  sortDir,
-  onToggleSortDir,
-  showDuplicatesOnly,
-  duplicatesGlobal,
-  onToggleDuplicates,
-  duplicateCount,
   onImportFiles,
   importDisabled,
 }) {
-  const { onCreateTag } = useDisc();
-  const [creatingTag, setCreatingTag] = useState(false);
-
-  // Same idea for search — the input feels instant, but the expensive
-  // "search everywhere across every folder" filter only re-runs after a
-  // short pause instead of on every keystroke.
+  // The input feels instant, but the library-wide filter only re-runs
+  // after a short pause rather than on every keystroke.
   const [localQuery, setLocalQuery] = useState(query);
-  const queryDebounceRef = useRef(null);
+  const debounceRef = useRef(null);
 
-  useEffect(() => () => clearTimeout(queryDebounceRef.current), []);
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
 
   function commitQuery(next) {
     setLocalQuery(next);
-    clearTimeout(queryDebounceRef.current);
-    queryDebounceRef.current = setTimeout(() => onQueryChange(next), 120);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onQueryChange(next), 120);
   }
 
   return (
@@ -57,101 +34,37 @@ export default function LibraryToolbar({
         <input
           value={localQuery}
           onChange={(e) => commitQuery(e.target.value)}
-          placeholder="Search everywhere (tracks + tags)…"
+          placeholder="Search all music…"
         />
-        {resultSummary && (
-          <div className="library-toolbar__result-popover">{resultSummary}</div>
-        )}
+        {resultSummary && <div className="library-toolbar__result-popover">{resultSummary}</div>}
       </div>
+
+      <div className="library-toolbar__spacer" />
 
       <button
         className="library-toolbar__button library-toolbar__button--ghost"
-        title={
-          importDisabled
-            ? "Choose a music folder first"
-            : "Pick files to add — a reliable alternative if drag-and-drop isn't working"
-        }
+        title={importDisabled ? "Pick a folder first to add files to it" : "Add files to this folder"}
         disabled={importDisabled}
         onClick={onImportFiles}
       >
         + Import
       </button>
-
-      <div className="library-toolbar__tag-wrap">
-        <button
-          className="library-toolbar__button"
-          title="Create a new tag"
-          onClick={() => setCreatingTag((v) => !v)}
-        >
-          + Add Tag
-        </button>
-        {creatingTag && (
-          <TagCreateMenu
-            onCreate={(name, color) => onCreateTag(name, color)}
-            onClose={() => setCreatingTag(false)}
-          />
-        )}
-      </div>
-
-      <div className="library-toolbar__divider" />
-
-      <Dropdown
-        className="library-toolbar__key library-toolbar__key--sort"
-        value={sortKey}
-        onChange={onSortKeyChange}
-        title="Sort by"
-        options={SORT_OPTIONS.map((opt) => ({
-          value: opt.value,
-          label: `Sort: ${opt.label}`,
-        }))}
-      />
-      {sortKey !== "folder" && (
-        <button
-          className="library-toolbar__button library-toolbar__button--ghost"
-          title={sortDir === "asc" ? "Ascending" : "Descending"}
-          onClick={onToggleSortDir}
-        >
-          <Icon name={sortDir === "asc" ? "arrowUp" : "arrowDown"} size={13} />
-        </button>
-      )}
-
-      <div className="library-toolbar__divider" />
-
-      <button
-        className={
-          "library-toolbar__button library-toolbar__button--ghost" +
-          (showDuplicatesOnly ? " library-toolbar__button--active" : "")
-        }
-        title={
-          (duplicateCount > 0
-            ? `${duplicateCount} possible duplicate(s) — by exact file size, or waveform-shape similarity among tracks you've already opened`
-            : "No likely duplicates found") +
-          " · Shift-click for every duplicate in the whole library, regardless of the folder/search you're currently viewing"
-        }
-        onClick={onToggleDuplicates}
-      >
-        ⧉ Duplicates{duplicateCount > 0 ? ` (${duplicateCount})` : ""}
-        {showDuplicatesOnly && duplicatesGlobal ? " · Library" : ""}
-      </button>
-
-      <div className="library-toolbar__divider" />
-
       <button
         className="library-toolbar__button library-toolbar__button--ghost"
-        title="Play everything currently shown, in order"
+        title="Play everything shown, in order"
         disabled={playDisabled}
         onClick={onPlayAll}
       >
-        <Icon name="play" size={12} style={{ marginRight: 5 }} />
-        Play All
+        <Icon name="play" size={12} />
+        Play
       </button>
       <button
-        className="library-toolbar__button library-toolbar__button--ghost"
-        title="Shuffle-play everything currently shown"
+        className="library-toolbar__button"
+        title="Shuffle-play everything shown"
         disabled={playDisabled}
         onClick={onShufflePlay}
       >
-        <Icon name="shuffle" size={13} style={{ marginRight: 5 }} />
+        <Icon name="shuffle" size={13} />
         Shuffle
       </button>
     </div>

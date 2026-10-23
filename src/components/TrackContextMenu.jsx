@@ -1,31 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import Icon from "./Icon.jsx";
 import "./TrackContextMenu.css";
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT = 284;
+const MENU_HEIGHT = 170;
 
-export default function TrackContextMenu({
-  x,
-  y,
-  filePath,
-  collections,
-  onAddToCollection,
-  onCreateCollection,
-  inCollectionName,
-  onRemoveFromCollection,
-  onRename,
-  onRepair,
-  onDelete,
-  deleteCount = 1,
-  onClose,
-}) {
+export default function TrackContextMenu({ x, y, filePath, onRename, onDelete, onClose }) {
   const [copied, setCopied] = useState(false);
   const [armed, setArmed] = useState(false);
-  const [collectionMenuOpen, setCollectionMenuOpen] = useState(false);
-  const [creatingCollection, setCreatingCollection] = useState(false);
-  const [newCollectionName, setNewCollectionName] = useState("");
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -43,9 +25,8 @@ export default function TrackContextMenu({
     };
   }, [onClose]);
 
-  // Rendered by a portal straight onto <body>, so these fixed coordinates
-  // are relative to the real viewport — clamp so it can't render off-screen
-  // near the right/bottom edge.
+  // Portaled onto <body>, so these fixed coordinates are relative to the
+  // real viewport — clamp so it can't render off-screen.
   const left = Math.min(x, window.innerWidth - MENU_WIDTH - 8);
   const top = Math.min(y, window.innerHeight - MENU_HEIGHT - 8);
 
@@ -61,19 +42,6 @@ export default function TrackContextMenu({
         }}
       >
         Rename
-      </button>
-      <button
-        className="track-context-menu__option"
-        disabled={!onRepair}
-        title={
-          !onRepair ? "Can't repair — this file isn't reachable right now" : undefined
-        }
-        onClick={() => {
-          onRepair?.();
-          onClose();
-        }}
-      >
-        Repair Track…
       </button>
       <button
         className="track-context-menu__option"
@@ -96,74 +64,6 @@ export default function TrackContextMenu({
       </button>
 
       <div className="track-context-menu__divider" />
-
-      {creatingCollection ? (
-        <div className="track-context-menu__create-row">
-          <input
-            autoFocus
-            className="track-context-menu__create-input"
-            value={newCollectionName}
-            placeholder="Collection name…"
-            onChange={(e) => setNewCollectionName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newCollectionName.trim()) {
-                onCreateCollection(newCollectionName.trim());
-                onClose();
-              }
-            }}
-          />
-        </div>
-      ) : collectionMenuOpen ? (
-        <>
-          {collections.length === 0 && (
-            <div className="track-context-menu__empty">No collections yet.</div>
-          )}
-          {collections.map((c) => (
-            <button
-              key={c.id}
-              className="track-context-menu__option"
-              onClick={() => {
-                onAddToCollection(c.id);
-                onClose();
-              }}
-            >
-              <span
-                className="track-context-menu__dot"
-                style={{ background: c.color ?? "var(--text-tertiary)", color: c.color ?? "var(--text-tertiary)" }}
-              />
-              {c.name}
-            </button>
-          ))}
-          <button
-            className="track-context-menu__option track-context-menu__option--accent"
-            onClick={() => setCreatingCollection(true)}
-          >
-            + New Collection
-          </button>
-        </>
-      ) : (
-        <button
-          className="track-context-menu__option"
-          onClick={() => setCollectionMenuOpen(true)}
-        >
-          + Add to Collection
-          <Icon name="chevronRight" size={11} style={{ marginLeft: 4 }} />
-        </button>
-      )}
-
-      {inCollectionName && (
-        <button
-          className="track-context-menu__option"
-          onClick={() => {
-            onRemoveFromCollection();
-            onClose();
-          }}
-        >
-          Remove from "{inCollectionName}"
-        </button>
-      )}
-
-      <div className="track-context-menu__divider" />
       <button
         className={
           "track-context-menu__option track-context-menu__option--danger" +
@@ -178,11 +78,7 @@ export default function TrackContextMenu({
           }
         }}
       >
-        {armed
-          ? `Click again to move ${deleteCount > 1 ? `${deleteCount} songs` : "it"} to Trash`
-          : deleteCount > 1
-          ? `Delete ${deleteCount} Songs…`
-          : "Delete Song…"}
+        {armed ? "Click again to move it to Trash" : "Delete Song…"}
       </button>
     </div>,
     document.body

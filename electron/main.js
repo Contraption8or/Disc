@@ -1,16 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu, shell, clipboard, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { watch, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, createReadStream, createWriteStream } from "node:fs";
+import { watch, readFileSync, appendFileSync, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { createRequire } from "node:module";
-import AdmZip from "adm-zip";
-import archiver from "archiver";
-import yauzl from "yauzl";
 
 // mouse-state is a Windows-only native addon (CommonJS, so it needs
 // createRequire from this ESM file) — see native/mouse-state/mouse_state.cc
@@ -41,20 +36,6 @@ if (process.env.DISC_USER_DATA) {
 
 // Where Disc's own releases are published — used by the update check
 // below. Public repo, so the GitHub API needs no auth for this.
-const UPDATE_REPO = "Contraption8or/Disc";
-
-// Simple numeric X.Y.Z comparison — this project's tags are always plain
-// semver (v1.2.3), never pre-release suffixes, so a real semver library
-// would be more machinery than the actual format needs.
-function compareVersions(a, b) {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
 
 // Content-Type by extension for disc-media:// responses (see below) — the
 // same set of formats the rest of the app already treats as playable
@@ -110,7 +91,7 @@ protocol.registerSchemesAsPrivileged([
 // Without this, launching Disc while it's already running doesn't do
 // nothing so much as it does something confusing: a second full process
 // tree (Vite + Electron) spins up and immediately collides with the first
-// over port 5173, and depending on timing that can either silently fail
+// over port 5174, and depending on timing that can either silently fail
 // or leave stray processes behind — repeated launches this way is
 // genuinely how a machine ends up with a pile of stuck node/electron
 // processes and a Desktop shortcut that looks like it's doing nothing.
@@ -131,19 +112,17 @@ if (!gotSingleInstanceLock) {
 // straight from the running taskbar button falls back to Electron's own
 // generic icon regardless of what icon the BrowserWindow itself was given.
 // Deliberately its own id, distinct from package.json's build.appId
-// ("com.disc.app") — that id is what a real packaged install registers
+// ("com.disc.lite") — that id is what a real packaged install registers
 // with Windows (Start Menu entry, Programs-and-Features entry, icon), and
 // a dev-mode instance squatting on the same id can end up with a blank/
 // generic taskbar icon if that packaged install is ever removed while
 // Windows still has this id cached against it. A distinct id sidesteps
 // that regardless of what is or isn't installed.
 if (process.platform === "win32") {
-  app.setAppUserModelId("com.disc.app.dev");
+  app.setAppUserModelId("com.disc.lite");
 }
 
 let mainWindow = null;
-let pomodoroWindow = null; // the standalone floating Pomodoro widget — see createPomodoroWindow
-let normalBounds = null; // remembered so we can restore after compact mode
 const folderWatchers = new Map(); // key -> FSWatcher
 const watchDebounceTimers = new Map(); // key -> Timeout
 
@@ -162,25 +141,11 @@ const crashLogPath = path.join(app.getPath("userData"), "crash-log.jsonl");
 // keep existing. Named with a leading dot, and explicitly skipped by the
 // folder scanner below, so it never shows up as a real library track.
 const SECTIONS_DIR_NAME = ".disc-sections";
-function sectionsDirFor(trackFilePath) {
-  return path.join(path.dirname(trackFilePath), SECTIONS_DIR_NAME);
-}
-
 function loadSettings() {
   try {
     return JSON.parse(readFileSync(settingsPath, "utf8"));
   } catch {
     return {};
-  }
-}
-
-function saveSettings(settings) {
-  try {
-    const dir = path.dirname(settingsPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-  } catch {
-    // Best effort — worst case the setting doesn't persist.
   }
 }
 
@@ -191,131 +156,11 @@ function saveSettings(settings) {
 // (which is what the renderer's own localStorage uses) since this needs
 // to be readable before/without a renderer at all, same reasoning as
 // disc-settings.json above.
-const deviceIdentityPath = path.join(app.getPath("userData"), "device-identity.json");
 
 // Folder used inside a shared/synced music directory for the event log —
 // same "dot-prefixed, explicitly skipped by the scanner" pattern as
 // SECTIONS_DIR_NAME above, so it never shows up as library content.
 const SYNC_DIR_NAME = ".disc-sync";
-
-function loadDeviceIdentity() {
-  try {
-    return JSON.parse(readFileSync(deviceIdentityPath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function saveDeviceIdentity(identity) {
-  try {
-    const dir = path.dirname(deviceIdentityPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(deviceIdentityPath, JSON.stringify(identity, null, 2));
-  } catch {
-    // Best effort — worst case a new id gets generated next launch.
-  }
-}
-
-ipcMain.handle("disc:get-device-identity", () => {
-  let identity = loadDeviceIdentity();
-  if (!identity?.id) {
-    identity = { id: randomUUID(), name: os.hostname() || "This PC" };
-    saveDeviceIdentity(identity);
-  }
-  return identity;
-});
-
-ipcMain.handle("disc:set-device-name", (_event, name) => {
-  const identity = loadDeviceIdentity() || { id: randomUUID() };
-  identity.name = (name || "").trim() || identity.name || "This PC";
-  saveDeviceIdentity(identity);
-  return identity;
-});
-
-// Appends this device's own batch of sync events to its own .jsonl file —
-// never any other device's file, so two machines writing at once (the
-// scenario that actually risks corruption over something like Resilio
-// Sync) can never collide at the filesystem level. One line per event,
-// newline-delimited, so a partial file sync mid-transfer just means a few
-// missing recent lines rather than one unparseable blob.
-ipcMain.handle("disc:append-sync-events", async (_event, { rootDir, deviceId, events }) => {
-  if (!rootDir || !deviceId || !events?.length) return { ok: false };
-  try {
-    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `${deviceId}.jsonl`);
-    const lines = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
-    appendFileSync(filePath, lines, "utf8");
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-// Reads every device's event log plus its published display name (a
-// small separate .meta.json per device, since the device's actual name
-// lives locally in device-identity.json and is never itself an event).
-// Skips any single line that fails to parse — a partial trailing line
-// from a sync still mid-transfer — rather than failing the whole read;
-// the rest of that device's history is still perfectly valid.
-ipcMain.handle("disc:read-sync-state", async (_event, rootDir) => {
-  if (!rootDir) return { events: [], deviceNames: {} };
-  const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
-  let entries;
-  try {
-    entries = await fs.readdir(dir);
-  } catch {
-    return { events: [], deviceNames: {} };
-  }
-
-  const events = [];
-  const deviceNames = {};
-
-  for (const entry of entries) {
-    const full = path.join(dir, entry);
-    if (entry.endsWith(".jsonl")) {
-      let text;
-      try {
-        text = await fs.readFile(full, "utf8");
-      } catch {
-        continue;
-      }
-      for (const line of text.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          events.push(JSON.parse(trimmed));
-        } catch {
-          // Partial trailing line — skip, see comment above.
-        }
-      }
-    } else if (entry.endsWith(".meta.json")) {
-      try {
-        const meta = JSON.parse(await fs.readFile(full, "utf8"));
-        if (meta?.id) deviceNames[meta.id] = meta.name || meta.id;
-      } catch {
-        // Malformed/partially-synced meta file — ignore it.
-      }
-    }
-  }
-
-  return { events, deviceNames };
-});
-
-// Publishes this device's display name into the shared folder so other
-// machines can show "Peter's PC" instead of a raw device id — the id
-// itself already names the .jsonl file, this is purely the human label.
-ipcMain.handle("disc:write-device-meta", async (_event, { rootDir, id, name }) => {
-  if (!rootDir || !id) return { ok: false };
-  try {
-    const dir = path.join(rootDir, SYNC_DIR_NAME, "devices");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `${id}.meta.json`), JSON.stringify({ id, name }, null, 2));
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
 
 // V8's heap size flag only takes effect if set before the app (and its
 // renderer processes) actually start, so this has to happen here at the
@@ -377,7 +222,6 @@ Menu.setApplicationMenu(null);
 const isWindows11 =
   process.platform === "win32" && parseInt(os.release().split(".")[2] || "0", 10) >= 22000;
 const useAcrylic = isWindows11 && Boolean(startupSettings.useAcrylic);
-const isWindows = process.platform === "win32";
 
 // --- Rounded window corners ---------------------------------------------
 // Windows 11 rounds every normal top-level window's corners by default,
@@ -387,7 +231,6 @@ const isWindows = process.platform === "win32";
 // every other window on the desktop needs the native
 // setWindowCornerPreference helper from native/mouse-state (see its
 // mouse_state.cc for why it lives in that addon).
-const DWMWCP_DEFAULT = 0;
 const DWMWCP_DONOTROUND = 1;
 const DWMWCP_ROUND = 2;
 
@@ -445,7 +288,7 @@ function createWindow() {
     // whole page effectively fails to paint over the native material
     // instead of blending with it (shows up as a real blurred backdrop
     // with the entire Disc UI missing).
-    backgroundColor: useAcrylic ? "#00000000" : "#1b1b1f",
+    backgroundColor: useAcrylic ? "#00000000" : "#000000",
     // Deliberately not just "Disc" — launch-disc.vbs uses AppActivate to
     // detect whether the app is already running before deciding to launch
     // it, and AppActivate does a case-insensitive *prefix* match against
@@ -455,7 +298,7 @@ function createWindow() {
     // front) instead of ever starting the app — the launcher silently
     // does nothing. This longer, more specific title is unlikely to
     // prefix-match anything else.
-    title: "Disc — Music Library",
+    title: "Disc Lite",
     // Without this, dev mode (`electron .`, not a packaged build) shows
     // Electron's own generic default icon in the taskbar instead of
     // Disc's — a packaged build gets this for free from the .exe's own
@@ -471,19 +314,6 @@ function createWindow() {
       nodeIntegration: false,
       // Needed later for native drag-out of files into Premiere Pro.
       // Left here as a marker for Phase 3 (drag-to-Premiere).
-      // The Pomodoro timer's real countdown (see PomodoroContext.jsx)
-      // ticks here, in the main window, even when the popup is the only
-      // thing the user is actually looking at — Chromium throttles a
-      // window's JS timers (and, per user reports, its BroadcastChannel
-      // message handling right along with them) hard once it's occluded
-      // by other apps, which is exactly the normal case for this window
-      // while someone's working in Premiere with just the Pomodoro popup
-      // visible. That's what "pausing weirdly, and not un-pausing until
-      // I move [a] window around" was — dragging happens to briefly force
-      // Chromium/Windows to stop throttling it. Disabled outright so the
-      // real timer keeps ticking on schedule regardless of focus/
-      // visibility.
-      backgroundThrottling: false,
     },
   });
 
@@ -493,7 +323,7 @@ function createWindow() {
   mainWindow.setIcon(nativeImage.createFromPath(path.join(__dirname, "assets", "disc-icon.ico")));
 
   if (isDev) {
-    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.loadURL("http://localhost:5174");
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
@@ -502,7 +332,7 @@ function createWindow() {
   // Electron syncs the window title to the page's own <title> on every
   // navigation/reload by default, which would silently undo the title set
   // above (index.html's <title> is just "Disc") — launch-disc.vbs depends
-  // on the window title staying exactly "Disc — Music Library" to reliably
+  // on the window title staying exactly "Disc Lite" to reliably
   // detect an already-running instance (see comment there), so that has to
   // win over whatever the page sets.
   mainWindow.on("page-title-updated", (event) => {
@@ -558,7 +388,7 @@ function createWindow() {
       .then((result) => {
         if (!mainWindow) return;
         if (result.response === 0) {
-          if (isDev) mainWindow.loadURL("http://localhost:5173");
+          if (isDev) mainWindow.loadURL("http://localhost:5174");
           else mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
         } else {
           mainWindow.close();
@@ -568,11 +398,6 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
-    // Without this, closing the main window while the floating Pomodoro
-    // popup is still open would leave Disc running as an orphaned little
-    // timer widget with no way back to the real app — no tray icon, no
-    // menu, nothing to reopen it from.
-    pomodoroWindow?.close();
     teardownWindowSnap();
   });
 
@@ -1100,79 +925,6 @@ ipcMain.on("disc:set-snap-accent-color", (_event, hex) => {
   }
 });
 
-// A small, standalone, always-on-top-capable window that shows just the
-// Pomodoro timer — for keeping it visible over whatever else is on screen
-// without needing the whole Disc window open. It loads the exact same
-// renderer bundle as the main window, just with a query flag the React
-// entrypoint checks to render PomodoroPopup instead of the full app (see
-// src/main.jsx) — the timer itself keeps running in the main window's
-// PomodoroProvider either way; this window is a synced remote display/
-// control, not a second independent timer (see the BroadcastChannel setup
-// in PomodoroContext.jsx).
-// Brings a window to the very front and gives it focus. A plain
-// show()/focus() from a window that was just created (or is sitting behind
-// another one) isn't reliable on Windows — its focus-stealing prevention
-// quietly leaves the new window behind whatever was already active, which
-// is exactly how the Pomodoro popup kept opening underneath Disc. Briefly
-// flagging it always-on-top forces it above everything, then the flag is put
-// back to whatever it was so a normal (un-pinned) window doesn't stay
-// pinned afterwards.
-function raiseWindow(win) {
-  if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  const wasOnTop = win.isAlwaysOnTop();
-  win.setAlwaysOnTop(true);
-  win.show();
-  win.moveTop();
-  win.focus();
-  if (!wasOnTop) win.setAlwaysOnTop(false);
-}
-
-function createPomodoroWindow() {
-  if (pomodoroWindow) {
-    raiseWindow(pomodoroWindow);
-    return;
-  }
-  pomodoroWindow = new BrowserWindow({
-    width: 220,
-    height: 260,
-    minWidth: 180,
-    minHeight: 220,
-    show: false, // shown (and raised) on ready-to-show below
-    backgroundColor: "#1b1b1f",
-    title: "Disc — Pomodoro",
-    icon: path.join(__dirname, "assets", "disc-icon.ico"),
-    frame: false,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Same reasoning as the main window's own backgroundThrottling —
-      // this popup is meant to sit visible-but-unfocused (often pinned
-      // on top) while the user works in another app entirely, which is
-      // exactly the situation Chromium throttles a renderer hardest in.
-      // Its BroadcastChannel state updates and command sends need to go
-      // through promptly regardless.
-      backgroundThrottling: false,
-    },
-  });
-
-  if (isDev) {
-    pomodoroWindow.loadURL("http://localhost:5173/?pomodoroWindow=1");
-  } else {
-    pomodoroWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
-      search: "pomodoroWindow=1",
-    });
-  }
-
-  pomodoroWindow.once("ready-to-show", () => raiseWindow(pomodoroWindow));
-
-  pomodoroWindow.on("closed", () => {
-    pomodoroWindow = null;
-    mainWindow?.webContents.send("disc:pomodoro-window-state", false);
-  });
-}
-
 // The losing instance already called app.quit() above — this just makes
 // sure it never gets as far as opening a second window in the meantime.
 app.on("second-instance", () => {
@@ -1271,183 +1023,6 @@ app.on("window-all-closed", () => {
 
 // --- IPC handlers -----------------------------------------------------
 
-// Memory limit setting — read/write the persisted value, and relaunch to
-// actually apply it (it's a startup-time V8 flag, so it can't take effect
-// on a running process).
-ipcMain.handle("disc:get-memory-limit", () => {
-  return loadSettings().memoryLimitMb ?? null;
-});
-
-ipcMain.handle("disc:set-memory-limit", (_event, memoryLimitMb) => {
-  const settings = loadSettings();
-  if (memoryLimitMb) {
-    settings.memoryLimitMb = memoryLimitMb;
-  } else {
-    delete settings.memoryLimitMb;
-  }
-  saveSettings(settings);
-  return true;
-});
-
-// Same pattern as memory limit — read/write the persisted value, relaunch
-// to actually apply it (UV_THREADPOOL_SIZE is also only readable at
-// startup, same as the V8 heap flag).
-ipcMain.handle("disc:get-thread-pool-size", () => {
-  return loadSettings().threadPoolSize ?? null;
-});
-
-ipcMain.handle("disc:set-thread-pool-size", (_event, threadPoolSize) => {
-  const settings = loadSettings();
-  if (threadPoolSize) {
-    settings.threadPoolSize = threadPoolSize;
-  } else {
-    delete settings.threadPoolSize;
-  }
-  saveSettings(settings);
-  return true;
-});
-
-ipcMain.handle("disc:get-cpu-count", () => {
-  return os.cpus().length;
-});
-
-// Acrylic-backed themes' background — same read/write-persisted-value,
-// relaunch-to-apply pattern as memory limit and CPU threads above.
-// isWindows11-gated (not just win32) since backgroundMaterial is Windows
-// 11+ only — see the isWindows11 comment above createWindow for why this
-// distinction matters beyond "no effect": on Windows 10 it needs to be
-// forced off, not just left inert.
-ipcMain.handle("disc:get-acrylic-enabled", () => {
-  return isWindows11 && Boolean(loadSettings().useAcrylic);
-});
-
-ipcMain.handle("disc:set-acrylic-enabled", (_event, enabled) => {
-  const settings = loadSettings();
-  if (enabled) settings.useAcrylic = true;
-  else delete settings.useAcrylic;
-  saveSettings(settings);
-  return true;
-});
-
-// Lets the renderer tell "this theme's blur isn't active yet, restart to
-// turn it on" (Windows 11) apart from "this theme's blur can never turn on
-// here" (Windows 10 and everywhere else) — without it, ThemeSwitcher would
-// nag Windows 10 users to restart for an effect that restarting can't
-// produce.
-ipcMain.handle("disc:supports-acrylic", () => isWindows11);
-
-// Whether *this already-running* window was actually created with the
-// acrylic material — distinct from the saved preference above, which may
-// have just been changed and not yet take effect. Lets the renderer only
-// bother prompting for a restart when one would actually change anything.
-ipcMain.handle("disc:is-acrylic-window-active", () => useAcrylic);
-
-ipcMain.handle("disc:get-app-version", () => {
-  return app.getVersion();
-});
-
-// On-demand DevTools escape hatch for when someone (a user relaying to a
-// developer, or a developer themselves) needs to see console/network
-// output while something's misbehaving, without a special launch flag.
-ipcMain.handle("disc:open-devtools", () => {
-  mainWindow?.webContents.openDevTools({ mode: "detach" });
-  return true;
-});
-
-// Renderer crashes (see the render-process-gone handler above) get logged
-// here regardless of whether anyone had DevTools open at the time —
-// "reveal in Explorer" so a report of "the last few crashes look like
-// this" doesn't require walking someone through a userData file path.
-ipcMain.handle("disc:reveal-crash-log", () => {
-  if (!existsSync(crashLogPath)) return { exists: false };
-  shell.showItemInFolder(crashLogPath);
-  return { exists: true };
-});
-
-ipcMain.handle("disc:read-recent-crashes", async () => {
-  try {
-    const text = await fs.readFile(crashLogPath, "utf8");
-    const lines = text.trim().split("\n").filter(Boolean);
-    return lines.slice(-5).map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-  } catch {
-    return [];
-  }
-});
-
-// Used when a folder gets dragged in from Explorer — confirms the dropped
-// path is genuinely a directory (not a file, and not something that just
-// vanished) before Disc creates a linked folder for it.
-ipcMain.handle("disc:stat-path", async (_event, targetPath) => {
-  try {
-    const stat = await fs.stat(targetPath);
-    return { exists: true, isDirectory: stat.isDirectory() };
-  } catch {
-    return { exists: false, isDirectory: false };
-  }
-});
-
-ipcMain.on("disc:relaunch", () => {
-  app.relaunch();
-  app.exit(0);
-});
-
-// Checks GitHub Releases for a newer tagged version than the one
-// currently running. Read-only — never downloads anything itself, just
-// reports what's available so the renderer can decide whether to offer
-// the update.
-ipcMain.handle("disc:check-for-updates", async () => {
-  try {
-    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "Disc-App" },
-    });
-    if (!res.ok) return { success: false, error: `GitHub returned ${res.status}` };
-    const release = await res.json();
-    const latestVersion = String(release.tag_name || "").replace(/^v/, "");
-    const currentVersion = app.getVersion();
-    const asset = (release.assets || []).find((a) => a.name.endsWith(".exe"));
-    return {
-      success: true,
-      hasUpdate: Boolean(latestVersion) && compareVersions(latestVersion, currentVersion) > 0,
-      currentVersion,
-      latestVersion: latestVersion || currentVersion,
-      releaseUrl: release.html_url,
-      downloadUrl: asset?.browser_download_url || null,
-      assetName: asset?.name || null,
-    };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Downloads the new installer to a temp file, launches it, and quits Disc
-// so the (one-click NSIS) installer can replace the files currently in
-// use. There's no progress reporting mid-download — a single "downloading"
-// state in the UI is the whole story, which is an honest trade for how
-// small this feature needs to be; a real progress bar would mean
-// streaming with periodic IPC events instead of one buffered fetch.
-ipcMain.handle("disc:download-and-install-update", async (_event, { downloadUrl, assetName }) => {
-  try {
-    if (!downloadUrl) return { success: false, error: "No installer available for this release" };
-    const res = await fetch(downloadUrl);
-    if (!res.ok) return { success: false, error: `Download failed (${res.status})` };
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const destPath = path.join(app.getPath("temp"), assetName || "Disc-Update-Setup.exe");
-    await fs.writeFile(destPath, buffer);
-    const child = spawn(destPath, [], { detached: true, stdio: "ignore" });
-    child.unref();
-    app.quit();
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
 // --- Profiles ---------------------------------------------------------
 // A "profile" is everything Disc persists (theme, folders, tags, notes,
 // shortcuts, appearance, layout, marked sections, all of it) bundled
@@ -1464,563 +1039,12 @@ ipcMain.handle("disc:download-and-install-update", async (_event, { downloadUrl,
 // itself, which sidesteps every filesystem-rename edge case (illegal
 // characters, collisions, case-sensitivity differences across
 // platforms) that a name-as-filename scheme would run into.
-const profilesDir = path.join(app.getPath("userData"), "profiles");
-
-function ensureProfilesDir() {
-  if (!existsSync(profilesDir)) mkdirSync(profilesDir, { recursive: true });
-}
-
-ipcMain.handle("disc:list-profiles", async () => {
-  ensureProfilesDir();
-  try {
-    const files = await fs.readdir(profilesDir);
-    const profiles = [];
-    for (const fileName of files) {
-      if (!fileName.endsWith(".json")) continue;
-      try {
-        const raw = await fs.readFile(path.join(profilesDir, fileName), "utf8");
-        const parsed = JSON.parse(raw);
-        profiles.push({
-          fileName,
-          profileName: parsed.profileName || fileName.replace(/\.json$/, ""),
-          savedAt: parsed.savedAt || null,
-        });
-      } catch {
-        // A corrupted/unreadable profile file is skipped rather than
-        // breaking the whole list.
-      }
-    }
-    profiles.sort((a, b) => a.profileName.localeCompare(b.profileName));
-    return profiles;
-  } catch {
-    return [];
-  }
-});
-
-ipcMain.handle("disc:save-profile", async (_event, { profileName, data, fileName }) => {
-  ensureProfilesDir();
-  try {
-    const targetFileName = fileName || `profile-${Date.now()}.json`;
-    const content = JSON.stringify(
-      { profileName, savedAt: new Date().toISOString(), data },
-      null,
-      2
-    );
-    await fs.writeFile(path.join(profilesDir, targetFileName), content, "utf8");
-    return { success: true, fileName: targetFileName };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle("disc:load-profile", async (_event, fileName) => {
-  try {
-    const raw = await fs.readFile(path.join(profilesDir, fileName), "utf8");
-    const parsed = JSON.parse(raw);
-    return { success: true, profileName: parsed.profileName, data: parsed.data };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle("disc:rename-profile", async (_event, { fileName, newName }) => {
-  try {
-    const filePath = path.join(profilesDir, fileName);
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw);
-    parsed.profileName = newName;
-    await fs.writeFile(filePath, JSON.stringify(parsed, null, 2), "utf8");
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle("disc:delete-profile", async (_event, fileName) => {
-  try {
-    await fs.unlink(path.join(profilesDir, fileName));
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Exporting writes to wherever the person chooses (for sharing via
-// email, a drive, etc) — a completely separate concern from the
-// profiles folder above, which is just Disc's own local list.
-ipcMain.handle("disc:export-profile-to-file", async (_event, { profileName, data }) => {
-  if (!mainWindow) return { success: false };
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export Disc profile",
-    defaultPath: `${profileName.replace(/[/\\:*?"<>|]/g, "")}.discprofile.json`,
-    filters: [{ name: "Disc Profile", extensions: ["json"] }],
-  });
-  if (result.canceled || !result.filePath) return { success: false, cancelled: true };
-  try {
-    const content = JSON.stringify(
-      { profileName, savedAt: new Date().toISOString(), data },
-      null,
-      2
-    );
-    await fs.writeFile(result.filePath, content, "utf8");
-    return { success: true, filePath: result.filePath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// The "with music" variant of the export above — same profile.json, plus
-// every track the renderer already knows about (main folder + every
-// linked custom folder) added to the archive under music/, keyed by the
-// same main/... or folder:Name/... scheme Studio Sync uses for its own
-// cross-machine track identity (see src/sync/trackKey.js) — the renderer
-// computes each track's key and sends { filePath, trackKey } pairs
-// through, so this file doesn't need its own copy of that logic. A
-// manifest.json records each file's *original* absolute path alongside
-// where it landed in the zip, which is what lets import below rewrite
-// every trackId-keyed profile field (tags, notes, sections, favorites,
-// collections) to match wherever the music actually ends up getting
-// extracted to.
-//
-// Streams the archive straight to disk (archiver) rather than building it
-// in memory (AdmZip): AdmZip reads every file whole into a Buffer and then
-// deflates them all synchronously on the main process, which for a library
-// of several hundred tracks meant gigabytes of RAM and a frozen — then
-// crashed — app. Audio is already compressed, so entries are STOREd
-// (copied, not re-deflated) too, which is also what makes this fast.
-// Progress goes to the renderer (and the taskbar icon) as it goes.
-let lastZipProgressAt = 0;
-function sendZipProgress(phase, done, total, { force = false } = {}) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const now = Date.now();
-  if (!force && now - lastZipProgressAt < 100) return;
-  lastZipProgressAt = now;
-  mainWindow.webContents.send("disc:profile-zip-progress", { phase, done, total });
-  mainWindow.setProgressBar(total > 0 && done < total ? done / total : -1);
-}
-
-ipcMain.handle("disc:export-profile-with-music", async (_event, { profileName, data, tracks }) => {
-  if (!mainWindow) return { success: false };
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export Disc profile with music",
-    defaultPath: `${profileName.replace(/[/\\:*?"<>|]/g, "")}.discprofile.zip`,
-    filters: [{ name: "Disc Profile (with music)", extensions: ["zip"] }],
-  });
-  if (result.canceled || !result.filePath) return { success: false, cancelled: true };
-  const destPath = result.filePath;
-  try {
-    const entries = [];
-    for (const t of tracks || []) {
-      if (!t?.trackKey || !t?.filePath) continue;
-      // Skip a file that vanished/became unreadable rather than failing
-      // the whole archive.
-      try {
-        const st = await fs.stat(t.filePath);
-        if (!st.isFile()) continue;
-      } catch {
-        continue;
-      }
-      // "folder:Name/..." isn't a safe path to extract on Windows later
-      // (a bare colon is a reserved path character there) — "folder/Name/..."
-      // carries the same information without that problem.
-      const zipRelPath = t.trackKey.startsWith("folder:")
-        ? `folder/${t.trackKey.slice(7)}`
-        : t.trackKey;
-      entries.push({ filePath: t.filePath, zipRelPath });
-    }
-    const manifest = entries.map((e) => ({ originalPath: e.filePath, zipPath: e.zipRelPath }));
-    const total = entries.length;
-
-    await new Promise((resolve, reject) => {
-      const output = createWriteStream(destPath);
-      const archive = archiver("zip", { store: true });
-      let done = 0;
-      output.on("close", resolve);
-      output.on("error", reject);
-      archive.on("error", reject);
-      // A file that disappears between the stat above and being read
-      // surfaces as an ENOENT warning — skip it (import already ignores
-      // manifest entries with no matching file) but fail on anything else.
-      archive.on("warning", (err) => {
-        if (err.code !== "ENOENT") reject(err);
-      });
-      archive.on("entry", (entry) => {
-        if (!entry.name.startsWith("music/")) return;
-        done += 1;
-        sendZipProgress("export", done, total);
-      });
-      archive.pipe(output);
-      archive.append(
-        Buffer.from(JSON.stringify({ profileName, savedAt: new Date().toISOString(), data }, null, 2)),
-        { name: "profile.json" }
-      );
-      archive.append(Buffer.from(JSON.stringify(manifest, null, 2)), { name: "manifest.json" });
-      for (const e of entries) {
-        archive.file(e.filePath, { name: `music/${e.zipRelPath}`, store: true });
-      }
-      sendZipProgress("export", 0, total, { force: true });
-      archive.finalize();
-    });
-    return { success: true, filePath: destPath, trackCount: total };
-  } catch (err) {
-    await fs.rm(destPath, { force: true }).catch(() => {});
-    return { success: false, error: err.message };
-  } finally {
-    sendZipProgress("export", 0, 0, { force: true });
-  }
-});
-
-// Rewrites every trackId-keyed field in an imported profile's data from
-// the exporting machine's absolute paths to this machine's — pathMap is
-// originalPath -> newPath, built by importProfileZip below as it
-// extracts each file. Anything not in the map (shouldn't normally
-// happen, since the zip was built from exactly these fields' own track
-// ids) is left exactly as it was rather than dropped.
-function remapTrackIdsInProfileData(data, pathMap) {
-  const next = { ...data };
-  const remapObjectKeys = (key) => {
-    if (!next[key]) return;
-    try {
-      const obj = JSON.parse(next[key]);
-      const remapped = {};
-      for (const [id, value] of Object.entries(obj)) remapped[pathMap.get(id) || id] = value;
-      next[key] = JSON.stringify(remapped);
-    } catch {
-      // Leave the raw value alone if it doesn't parse the way expected.
-    }
-  };
-  const remapIdArray = (key) => {
-    if (!next[key]) return;
-    try {
-      const arr = JSON.parse(next[key]);
-      next[key] = JSON.stringify(arr.map((id) => pathMap.get(id) || id));
-    } catch {
-      // Leave as-is.
-    }
-  };
-
-  remapObjectKeys("disc.trackTags");
-  remapObjectKeys("disc.trackNotes");
-  remapObjectKeys("disc.trackSections");
-  remapIdArray("disc.favorites");
-
-  if (next["disc.trackOrder"]) {
-    try {
-      const orderByFolder = JSON.parse(next["disc.trackOrder"]);
-      const remapped = {};
-      for (const [folderKey, ids] of Object.entries(orderByFolder)) {
-        remapped[folderKey] = ids.map((id) => pathMap.get(id) || id);
-      }
-      next["disc.trackOrder"] = JSON.stringify(remapped);
-    } catch {
-      // Leave as-is.
-    }
-  }
-
-  if (next["disc.collections"]) {
-    try {
-      const collections = JSON.parse(next["disc.collections"]);
-      next["disc.collections"] = JSON.stringify(
-        collections.map((c) => ({
-          ...c,
-          trackIds: (c.trackIds || []).map((id) => pathMap.get(id) || id),
-        }))
-      );
-    } catch {
-      // Leave as-is.
-    }
-  }
-
-  return next;
-}
-
-// Extracts a profile+music zip (see the export handler above): reads
-// profile.json and manifest.json, asks where to put the music (there's
-// no sensible default — it's the whole reason this prompt exists instead
-// of silently picking a folder), copies every bundled file there, then
-// points the profile at the new locations (disc.musicFolder, each
-// relinked custom folder's folderPath) and remaps every trackId-keyed
-// field to match. Returns the exact same shape as the plain-.json import
-// path, so the renderer doesn't need to know or care which kind of file
-// it actually picked.
-//
-// Reads the archive with yauzl and streams each file to disk one at a
-// time, instead of AdmZip's load-the-whole-zip-into-memory approach —
-// same reason as the export side (a library of several hundred tracks
-// can be gigabytes, which AdmZip can't even hold in a single Buffer).
-// Only the zip's table of contents plus the two small JSON files are ever
-// held in memory.
-function openZip(filePath) {
-  return new Promise((resolve, reject) => {
-    yauzl.open(filePath, { lazyEntries: true, autoClose: false }, (err, zf) =>
-      err ? reject(err) : resolve(zf)
-    );
-  });
-}
-
-function indexZipEntries(zf) {
-  return new Promise((resolve, reject) => {
-    const entries = new Map();
-    zf.on("entry", (entry) => {
-      entries.set(entry.fileName, entry);
-      zf.readEntry();
-    });
-    zf.on("end", () => resolve(entries));
-    zf.on("error", reject);
-    zf.readEntry();
-  });
-}
-
-function openZipEntryStream(zf, entry) {
-  return new Promise((resolve, reject) => {
-    zf.openReadStream(entry, (err, stream) => (err ? reject(err) : resolve(stream)));
-  });
-}
-
-// Event-based on purpose (not `for await` / stream.pipeline): yauzl's
-// read streams for stored (uncompressed) entries — which is every entry
-// our own export writes — never settle under async iteration or
-// pipeline(), so those would hang the import forever. Plain
-// data/end/finish events work reliably.
-async function readZipEntryText(zf, entry) {
-  const stream = await openZipEntryStream(zf, entry);
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    stream.on("data", (chunk) => chunks.push(chunk));
-    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    stream.on("error", reject);
-  });
-}
-
-function pipeZipEntryToFile(stream, filePath) {
-  return new Promise((resolve, reject) => {
-    const out = createWriteStream(filePath);
-    stream.on("error", (err) => {
-      out.destroy();
-      reject(err);
-    });
-    out.on("error", reject);
-    out.on("finish", resolve);
-    stream.pipe(out);
-  });
-}
-
-// Joins untrusted archive path segments under root, refusing anything
-// that would land outside it (a crafted "../" entry).
-function safeJoinUnder(root, parts) {
-  const clean = parts.filter((p) => p && p !== "." && p !== "..");
-  const full = path.join(root, ...clean);
-  const rel = path.relative(root, full);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
-  return full;
-}
-
-async function importProfileZip(zipFilePath) {
-  let zf;
-  try {
-    zf = await openZip(zipFilePath);
-    const entries = await indexZipEntries(zf);
-    const profileEntry = entries.get("profile.json");
-    if (!profileEntry) return { success: false, error: "Not a valid Disc profile archive" };
-    const parsed = JSON.parse(await readZipEntryText(zf, profileEntry));
-    if (!parsed.data) return { success: false, error: "Not a valid Disc profile archive" };
-
-    const manifestEntry = entries.get("manifest.json");
-    const manifest = manifestEntry ? JSON.parse(await readZipEntryText(zf, manifestEntry)) : [];
-    if (manifest.length === 0) {
-      // No music actually bundled (every track vanished before export, or
-      // this archive just never had any) — nothing to extract or remap,
-      // same outcome as a plain .json import.
-      return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
-    }
-
-    if (!mainWindow) return { success: false, error: "No window to prompt for a destination" };
-    const destResult = await dialog.showOpenDialog(mainWindow, {
-      title: "Choose where to put the imported music",
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (destResult.canceled || destResult.filePaths.length === 0) {
-      return { success: false, cancelled: true };
-    }
-    const destRoot = destResult.filePaths[0];
-
-    const pathMap = new Map();
-    const linkedFolderNames = new Set();
-    const total = manifest.length;
-    let processed = 0;
-    sendZipProgress("import", 0, total, { force: true });
-    for (const entry of manifest) {
-      processed += 1;
-      const zipPath = entry.zipPath; // "main/..." or "folder/Name/..."
-      let newPath;
-      let folderName = null;
-      if (zipPath.startsWith("folder/")) {
-        const rest = zipPath.slice(7);
-        const slashIndex = rest.indexOf("/");
-        folderName = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
-        const relPart = slashIndex === -1 ? "" : rest.slice(slashIndex + 1);
-        newPath = safeJoinUnder(destRoot, [folderName, ...relPart.split("/")]);
-      } else if (zipPath.startsWith("main/")) {
-        newPath = safeJoinUnder(destRoot, zipPath.slice(5).split("/"));
-      } else {
-        continue;
-      }
-      const zipEntry = entries.get(`music/${zipPath}`);
-      if (!newPath || !zipEntry) continue;
-      try {
-        await fs.mkdir(path.dirname(newPath), { recursive: true });
-        const stream = await openZipEntryStream(zf, zipEntry);
-        await pipeZipEntryToFile(stream, newPath);
-        pathMap.set(entry.originalPath, newPath);
-        if (folderName) linkedFolderNames.add(folderName);
-      } catch {
-        // Skip a file that fails to extract rather than failing the whole import.
-      }
-      sendZipProgress("import", processed, total);
-    }
-
-    return finishZipImport(parsed, pathMap, linkedFolderNames, destRoot);
-  } catch (err) {
-    return { success: false, error: err.message };
-  } finally {
-    zf?.close();
-    sendZipProgress("import", 0, 0, { force: true });
-  }
-}
-
-function finishZipImport(parsed, pathMap, linkedFolderNames, destRoot) {
-  const data = remapTrackIdsInProfileData(parsed.data, pathMap);
-  data["disc.musicFolder"] = JSON.stringify(destRoot);
-  if (data["disc.customFolders"]) {
-    try {
-      const folders = JSON.parse(data["disc.customFolders"]);
-      data["disc.customFolders"] = JSON.stringify(
-        folders.map((f) =>
-          linkedFolderNames.has(f.name) ? { ...f, folderPath: path.join(destRoot, f.name) } : f
-        )
-      );
-    } catch {
-      // Leave as-is.
-    }
-  }
-
-  return {
-    success: true,
-    profileName: parsed.profileName || "Imported Profile",
-    data,
-    trackCount: pathMap.size,
-  };
-}
-
-ipcMain.handle("disc:import-profile-from-file", async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Import a Disc profile",
-    properties: ["openFile"],
-    filters: [{ name: "Disc Profile", extensions: ["json", "zip"] }],
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  const filePath = result.filePaths[0];
-  try {
-    if (filePath.toLowerCase().endsWith(".zip")) {
-      return await importProfileZip(filePath);
-    }
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed.data) return { success: false, error: "Not a valid Disc profile file" };
-    return { success: true, profileName: parsed.profileName || "Imported Profile", data: parsed.data };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
 
 // Toggle "always on top" — this is the lock button in the title bar.
 ipcMain.handle("disc:toggle-always-on-top", (_event, shouldPin) => {
   if (!mainWindow) return false;
   mainWindow.setAlwaysOnTop(shouldPin, "floating");
   return mainWindow.isAlwaysOnTop();
-});
-
-// Opens/closes the floating Pomodoro widget (see createPomodoroWindow
-// above). A toggle rather than separate open/close channels since the
-// only caller is a single button whose label already reflects state.
-ipcMain.on("disc:toggle-pomodoro-window", () => {
-  if (pomodoroWindow) {
-    pomodoroWindow.close(); // "closed" handler above notifies the main window
-  } else {
-    createPomodoroWindow();
-    mainWindow?.webContents.send("disc:pomodoro-window-state", true);
-  }
-});
-
-ipcMain.handle("disc:is-pomodoro-window-open", () => Boolean(pomodoroWindow));
-
-// The Pomodoro window's own "pin on top" — separate from the main
-// window's, since the whole point of this widget is being pinnable
-// independently of whether the main Disc window is pinned at all.
-ipcMain.handle("disc:toggle-pomodoro-always-on-top", (_event, shouldPin) => {
-  if (!pomodoroWindow || pomodoroWindow.isDestroyed()) return false;
-  pomodoroWindow.setAlwaysOnTop(shouldPin, "floating");
-  // Flagging a window as always-on-top only promises it'll stay above
-  // ordinary windows from here on — it doesn't retroactively move it to
-  // the front of whatever's *already* in that same always-on-top tier,
-  // which is exactly how pinning could leave the popup marked "on top"
-  // while still sitting visibly behind something else (hard to repro
-  // reliably, reported mostly on Windows 10). moveTop() doesn't steal
-  // focus, so this doesn't yank attention away from whatever's actually
-  // being worked in — it just settles the popup's own z-order the moment
-  // it's pinned, instead of leaving that to chance.
-  if (shouldPin) pomodoroWindow.moveTop();
-  return pomodoroWindow.isAlwaysOnTop();
-});
-
-ipcMain.on("disc:pomodoro-window-close", () => {
-  pomodoroWindow?.close();
-});
-
-// Custom drag for the popup (see PomodoroPopup.jsx) — its header used to
-// be plain -webkit-app-region: drag, which hands the whole gesture to the
-// OS compositor with no way to read velocity back out of it, so "toss it
-// and it keeps sliding" needs the renderer driving position itself
-// instead. Takes a *relative* (dx, dy) rather than an absolute position:
-// the renderer never needs to know the popup's real position at all this
-// way (no bounds round-trip to seed a drag before it can start, which is
-// just one more thing to race against a fast pointerdown-then-move), it
-// only ever reports how far the pointer moved since the last sample —
-// this handler reads the window's actual current position itself, right
-// before nudging it, so it's always acting on the real thing rather than
-// a renderer-side copy that could drift. A fire-and-forget `send` rather
-// than an acked `invoke`, since this fires on every pointermove during
-// the drag and every animation frame during the post-release inertia
-// coast — round-tripping a reply at that frequency would only add
-// latency a drag can't afford.
-ipcMain.on("disc:move-pomodoro-window-by", (event, dx, dy) => {
-  if (!pomodoroWindow || pomodoroWindow.isDestroyed()) return;
-  const { x, y, width, height } = pomodoroWindow.getBounds();
-  const nx = x + dx;
-  const ny = y + dy;
-  // Keeps at least a corner of the popup reachable instead of letting a
-  // hard enough toss fling it fully off whichever display it's on with
-  // no way to get it back short of resetting panel layout.
-  const MIN_VISIBLE = 32;
-  const display = screen.getDisplayNearestPoint({
-    x: Math.round(nx + width / 2),
-    y: Math.round(ny + height / 2),
-  });
-  const { x: wx, y: wy, width: ww, height: wh } = display.workArea;
-  const clampedX = Math.min(Math.max(nx, wx - width + MIN_VISIBLE), wx + ww - MIN_VISIBLE);
-  const clampedY = Math.min(Math.max(ny, wy - height + MIN_VISIBLE), wy + wh - MIN_VISIBLE);
-  pomodoroWindow.setPosition(Math.round(clampedX), Math.round(clampedY));
-  // Tells the renderer which axis (if either) actually got stopped short
-  // by the screen edge, so its inertia loop (see startInertia in
-  // PomodoroPopup.jsx) can bounce instead of just silently sticking there
-  // for the rest of the coast — this only matters during inertia, not an
-  // active drag, so it's on the renderer to decide whether to act on it.
-  const hitX = clampedX !== nx;
-  const hitY = clampedY !== ny;
-  if (hitX || hitY) {
-    event.sender.send("disc:pomodoro-window-edge-hit", { hitX, hitY });
-  }
 });
 
 // Window controls — needed because the window is frameless so Disc can
@@ -2078,23 +1102,22 @@ ipcMain.on("disc:window-close", () => {
   mainWindow?.close();
 });
 
-// Open a native folder picker so the person can point Disc at their
-// music folder. Actually reading/watching that folder is Phase 2 —
-// this just returns the chosen path for now.
-ipcMain.handle("disc:choose-music-folder", async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ["openDirectory"],
-    title: "Choose your Disc music folder",
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
-
 // A native multi-select file picker for adding mp3s — a reliable
 // alternative to drag-and-drop, since OS-level DND can get intercepted by
 // third-party window-manager tools (WindHawk mods and similar) in ways
 // Disc has no visibility into or control over.
+// Native multi-select folder picker — the sidebar's "+" uses this so a whole
+// set of folders can be added in one go.
+ipcMain.handle("disc:choose-folders", async () => {
+  if (!mainWindow) return [];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openDirectory", "multiSelections"],
+    title: "Add music folders",
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
+});
+
 ipcMain.handle("disc:choose-mp3-files", async () => {
   if (!mainWindow) return [];
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -2140,7 +1163,8 @@ async function scanForMp3s(rootDir) {
       const fullPath = path.join(currentDir, entry.name);
       const fileType = entry.isFile() ? getFileType(entry.name) : null;
       if (entry.isDirectory()) {
-        // Marked-section clips (see sectionsDirFor above) live right next
+        // Marked-section clips (a feature this build no longer has, but an older
+        // Disc may have left behind) live right next
         // to their source track, inside a folder a normal scan would
         // otherwise happily walk into and list as real library tracks.
         if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
@@ -2204,210 +1228,6 @@ ipcMain.handle("disc:read-audio-file", async (_event, filePath) => {
 // This list is deliberately limited to formats Chromium's Web Audio
 // reliably decodes — leaving out things like WMA that aren't a
 // web-standard format and can't be promised to work.
-const CONVERTIBLE_EXTENSIONS = ["ogg", "wav", "flac", "m4a", "aac", "opus", "webm"];
-
-ipcMain.handle("disc:choose-image", async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Choose an image or GIF",
-    properties: ["openFile"],
-    filters: [
-      {
-        name: "Images",
-        extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg"],
-      },
-    ],
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
-
-ipcMain.handle("disc:choose-convertible-files", async () => {
-  if (!mainWindow) return [];
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ["openFile", "multiSelections"],
-    title: "Choose audio files to convert",
-    filters: [{ name: "Audio", extensions: CONVERTIBLE_EXTENSIONS }],
-  });
-  if (result.canceled) return [];
-  return result.filePaths;
-});
-
-ipcMain.handle("disc:choose-convertible-folder", async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ["openDirectory"],
-    title: "Choose a folder to search for audio files",
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-});
-
-// Recursively finds every convertible audio file under a folder — same
-// shape of walk as the main library scanner, just narrower (a fixed
-// extension list, no track metadata needed, just paths).
-ipcMain.handle("disc:scan-for-convertible", async (_event, rootDir) => {
-  const results = [];
-  async function walk(currentDir) {
-    let entries;
-    try {
-      entries = await fs.readdir(currentDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name === SECTIONS_DIR_NAME || entry.name === SYNC_DIR_NAME) continue;
-        await walk(fullPath);
-      } else if (entry.isFile()) {
-        const ext = entry.name.toLowerCase().split(".").pop();
-        if (CONVERTIBLE_EXTENSIONS.includes(ext)) results.push(fullPath);
-      }
-    }
-  }
-  await walk(rootDir);
-  return results;
-});
-
-// Writes the finished MP3 bytes (encoded in the renderer) to the chosen
-// destination folder, using the original filename with a .mp3 extension.
-// Skips (rather than overwrites) if a file with that name already exists,
-// since silently overwriting something in the user's music folder is the
-// kind of thing that should never happen without them explicitly asking.
-ipcMain.handle("disc:write-converted-mp3", async (_event, { destFolder, fileName, bytes }) => {
-  try {
-    const destPath = path.join(destFolder, fileName);
-    try {
-      await fs.access(destPath);
-      return { success: false, skipped: true, reason: "A file with that name already exists" };
-    } catch {
-      // Doesn't exist yet — good, proceed.
-    }
-    await fs.writeFile(destPath, Buffer.from(bytes));
-    return { success: true, path: destPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Classifies a file by its actual header bytes rather than trusting its
-// extension — a downloader/converter somewhere upstream can save, say,
-// AAC/M4A content with a .mp3 extension (this bit a real track once: a
-// file played fine inside Disc, since Chromium's Web Audio decodes AAC
-// regardless of extension, but DaVinci Resolve's importer inspected the
-// real container and silently refused to recognize it on drag-and-drop).
-// Only distinguishes what "Repair Track" cares about — genuine MP3 vs.
-// the handful of other containers Disc already knows how to decode.
-function sniffAudioFormat(buffer) {
-  if (buffer.length >= 3 && buffer.toString("latin1", 0, 3) === "ID3") return "mp3";
-  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return "mp3";
-  if (buffer.length >= 8 && buffer.toString("latin1", 4, 8) === "ftyp") return "mp4";
-  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "OggS") return "ogg";
-  if (buffer.length >= 4 && buffer.toString("latin1", 0, 4) === "fLaC") return "flac";
-  if (
-    buffer.length >= 12 &&
-    buffer.toString("latin1", 0, 4) === "RIFF" &&
-    buffer.toString("latin1", 8, 12) === "WAVE"
-  ) {
-    return "wav";
-  }
-  return "unknown";
-}
-
-// "Repair Track" (right-click a track) only actually applies to files
-// claiming to be .mp3 — that's the concrete case this was built for, and
-// generalizing to "repair" a mislabeled .wav/.flac/etc. would mean
-// guessing what the *correct* fix even is, which isn't something this
-// tries to do. Reports "healthy" for anything else so the UI can say
-// there's nothing to repair rather than claiming something's wrong.
-ipcMain.handle("disc:diagnose-track", async (_event, filePath) => {
-  try {
-    const ext = path.extname(filePath).slice(1).toLowerCase();
-    const fd = await fs.open(filePath, "r");
-    const buffer = Buffer.alloc(16);
-    await fd.read(buffer, 0, 16, 0);
-    await fd.close();
-    const actualFormat = sniffAudioFormat(buffer);
-    const healthy = ext !== "mp3" || actualFormat === "mp3";
-    return { healthy, claimedExtension: ext, actualFormat };
-  } catch (err) {
-    return { error: err.message };
-  }
-});
-
-// Overwrites a track's file with newly re-encoded bytes at the *same*
-// path — used by Repair Track. Backs up the original first (never
-// destructive), and finds a non-colliding backup name rather than
-// clobbering a previous repair's backup if this somehow runs twice.
-ipcMain.handle("disc:repair-track-file", async (_event, { filePath, bytes }) => {
-  try {
-    let backupPath = `${filePath}.original.bak`;
-    let counter = 1;
-    while (existsSync(backupPath)) {
-      backupPath = `${filePath}.original-${counter}.bak`;
-      counter += 1;
-    }
-    await fs.copyFile(filePath, backupPath);
-    await fs.writeFile(filePath, Buffer.from(bytes));
-    return { success: true, backupPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Writes a trimmed marked-section clip into the source track's own
-// .disc-sections folder (created on first use), for dragging just that
-// section into Premiere. Unlike disc:write-converted-mp3 (which writes
-// user-facing files into a linked library folder and must never silently
-// clobber something), this always overwrites — it's keyed by the
-// section's own id (see sectionFileName in src/audio/sectionDrag.js), so
-// re-rendering the same section is expected to replace its own file, not
-// collide with anything else. path.basename() strips any directory
-// components from the renderer-supplied name so a write can never land
-// outside the intended folder.
-ipcMain.handle("disc:write-section-audio", async (_event, { trackFilePath, fileName, bytes }) => {
-  try {
-    const dir = sectionsDirFor(trackFilePath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const safeName = path.basename(String(fileName || "section.mp3"));
-    const destPath = path.join(dir, safeName);
-    await fs.writeFile(destPath, Buffer.from(bytes));
-    return { success: true, path: destPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Lets the renderer skip re-trimming/re-encoding a section clip that's
-// already sitting on disk from a previous session — now that these
-// persist instead of living in a wiped-on-launch temp dir, there's no
-// reason to redo that work every time Disc restarts.
-ipcMain.handle("disc:section-audio-exists", async (_event, { trackFilePath, fileName }) => {
-  const safeName = path.basename(String(fileName || ""));
-  const destPath = path.join(sectionsDirFor(trackFilePath), safeName);
-  try {
-    await fs.access(destPath);
-    return { exists: true, path: destPath };
-  } catch {
-    return { exists: false, path: destPath };
-  }
-});
-
-// Removes one section's clip — called when its marked section is deleted
-// in Disc, so .disc-sections doesn't just accumulate orphaned files
-// forever. Best-effort: a clip that was never actually dragged (so never
-// rendered) simply won't exist, which is fine.
-ipcMain.handle("disc:delete-section-audio", async (_event, { trackFilePath, fileName }) => {
-  const safeName = path.basename(String(fileName || ""));
-  const destPath = path.join(sectionsDirFor(trackFilePath), safeName);
-  try {
-    await fs.unlink(destPath);
-  } catch {
-    // Already gone, or never existed — nothing to do.
-  }
-  return { success: true };
-});
 
 // Renames a track's actual file on disk, keeping its original extension
 // (the rename UI only ever lets you edit the name without the extension,
@@ -2505,42 +1325,6 @@ ipcMain.handle("disc:copy-files-into-folder", async (_event, { folderPath, sourc
   }
 
   return { copied, skipped };
-});
-
-// Zips up a folder's tracks and saves them wherever the person picks —
-// the "send this to a colleague" export. Files' relative subfolder
-// structure (if any) is preserved inside the archive.
-ipcMain.handle("disc:export-folder-zip", async (_event, { suggestedName, files }) => {
-  if (!mainWindow || !Array.isArray(files) || files.length === 0) {
-    return { success: false };
-  }
-
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export folder as ZIP",
-    defaultPath: `${suggestedName || "Disc Export"}.zip`,
-    filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
-  });
-
-  if (result.canceled || !result.filePath) {
-    return { success: false, cancelled: true };
-  }
-
-  try {
-    const zip = new AdmZip();
-    for (const file of files) {
-      const folderInZip = file.relativeDir ? file.relativeDir.replace(/\\/g, "/") : "";
-      try {
-        zip.addLocalFile(file.filePath, folderInZip, file.fileName);
-      } catch {
-        // Skip a file that vanished/became unreadable mid-export (e.g. an
-        // unplugged drive) rather than failing the whole archive.
-      }
-    }
-    zip.writeZip(result.filePath);
-    return { success: true, filePath: result.filePath, fileCount: files.length };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
 });
 
 // Watch a folder so new/removed mp3s are picked up automatically instead
@@ -2676,31 +1460,4 @@ ipcMain.handle("disc:move-file", async (_event, { sourcePath, destFolderPath }) 
     }
   }
   return destPath;
-});
-
-// --- Compact mode -------------------------------------------------------
-// Shrinks the window down to just the title bar + now-playing strip, for
-// tucking into a corner while an editor eats the rest of the screen.
-ipcMain.on("disc:enter-compact-mode", () => {
-  if (!mainWindow) return;
-  normalBounds = mainWindow.getBounds();
-
-  const width = 400;
-  const height = 136;
-  const workArea = screen.getPrimaryDisplay().workArea;
-  const x = workArea.x + workArea.width - width - 16;
-  const y = workArea.y + workArea.height - height - 16;
-
-  mainWindow.setMinimumSize(360, 130);
-  mainWindow.setBounds({ x, y, width, height });
-});
-
-ipcMain.on("disc:exit-compact-mode", () => {
-  if (!mainWindow) return;
-  mainWindow.setMinimumSize(760, 480);
-  if (normalBounds) {
-    mainWindow.setBounds(normalBounds);
-  } else {
-    mainWindow.setSize(1280, 800);
-  }
 });

@@ -1,31 +1,14 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+// Every capability the renderer can reach is listed here — there is no
+// other path from page code to Node/OS APIs.
 contextBridge.exposeInMainWorld("disc", {
   platform: process.platform,
   toggleAlwaysOnTop: (shouldPin) =>
     ipcRenderer.invoke("disc:toggle-always-on-top", shouldPin),
-  togglePomodoroWindow: () => ipcRenderer.send("disc:toggle-pomodoro-window"),
-  isPomodoroWindowOpen: () => ipcRenderer.invoke("disc:is-pomodoro-window-open"),
-  togglePomodoroAlwaysOnTop: (shouldPin) =>
-    ipcRenderer.invoke("disc:toggle-pomodoro-always-on-top", shouldPin),
-  closePomodoroWindow: () => ipcRenderer.send("disc:pomodoro-window-close"),
-  movePomodoroWindowBy: (dx, dy) => ipcRenderer.send("disc:move-pomodoro-window-by", dx, dy),
-  onProfileZipProgress: (callback) => {
-    const listener = (_event, progress) => callback(progress);
-    ipcRenderer.on("disc:profile-zip-progress", listener);
-    return () => ipcRenderer.removeListener("disc:profile-zip-progress", listener);
-  },
-  onPomodoroWindowEdgeHit: (callback) => {
-    const listener = (_event, hit) => callback(hit);
-    ipcRenderer.on("disc:pomodoro-window-edge-hit", listener);
-    return () => ipcRenderer.removeListener("disc:pomodoro-window-edge-hit", listener);
-  },
-  onPomodoroWindowState: (callback) => {
-    const listener = (_event, open) => callback(open);
-    ipcRenderer.on("disc:pomodoro-window-state", listener);
-    return () => ipcRenderer.removeListener("disc:pomodoro-window-state", listener);
-  },
-  chooseMusicFolder: () => ipcRenderer.invoke("disc:choose-music-folder"),
+
+  // Folders + files
+  chooseFolders: () => ipcRenderer.invoke("disc:choose-folders"),
   chooseMp3Files: () => ipcRenderer.invoke("disc:choose-mp3-files"),
   scanFolder: (folderPath) => ipcRenderer.invoke("disc:scan-folder", folderPath),
   readAudioFile: (filePath) => ipcRenderer.invoke("disc:read-audio-file", filePath),
@@ -33,16 +16,26 @@ contextBridge.exposeInMainWorld("disc", {
     ipcRenderer.invoke("disc:copy-files-into-folder", { folderPath, sourcePaths }),
   renameTrackFile: (filePath, newStem) =>
     ipcRenderer.invoke("disc:rename-track-file", { filePath, newStem }),
-  exportFolderZip: (suggestedName, files) =>
-    ipcRenderer.invoke("disc:export-folder-zip", { suggestedName, files }),
   watchFolder: (key, folderPath) =>
     ipcRenderer.invoke("disc:watch-folder", { key, folderPath }),
   unwatchFolder: (key) => ipcRenderer.invoke("disc:unwatch-folder", key),
+  onFolderChanged: (callback) => {
+    const listener = (_event, key) => callback(key);
+    ipcRenderer.on("disc:folder-changed", listener);
+    return () => ipcRenderer.removeListener("disc:folder-changed", listener);
+  },
+  deleteFile: (filePath) => ipcRenderer.invoke("disc:delete-file", filePath),
+  revealInExplorer: (filePath) => ipcRenderer.send("disc:reveal-in-explorer", filePath),
+  copyToClipboard: (text) => ipcRenderer.send("disc:copy-to-clipboard", text),
+
+  // Native OS drag-out (onto Premiere's timeline).
   startDrag: (filePath) => ipcRenderer.send("disc:start-drag", filePath),
   // Electron deprecated the old `File.path` property (from ~v32 onward it's
   // unreliable/empty) in favor of this — needed for reading the real path
   // of a file the user drags in from Explorer.
   getPathForFile: (file) => webUtils.getPathForFile(file),
+
+  // Frameless window controls + the window-snap system.
   windowMinimize: () => ipcRenderer.send("disc:window-minimize"),
   windowToggleMaximize: () => ipcRenderer.invoke("disc:window-toggle-maximize"),
   windowIsMaximized: () => ipcRenderer.invoke("disc:window-is-maximized"),
@@ -54,70 +47,4 @@ contextBridge.exposeInMainWorld("disc", {
     ipcRenderer.on("disc:window-maximized-changed", listener);
     return () => ipcRenderer.removeListener("disc:window-maximized-changed", listener);
   },
-  onFolderChanged: (callback) => {
-    const listener = (_event, key) => callback(key);
-    ipcRenderer.on("disc:folder-changed", listener);
-    return () => ipcRenderer.removeListener("disc:folder-changed", listener);
-  },
-  revealInExplorer: (filePath) => ipcRenderer.send("disc:reveal-in-explorer", filePath),
-  copyToClipboard: (text) => ipcRenderer.send("disc:copy-to-clipboard", text),
-  deleteFile: (filePath) => ipcRenderer.invoke("disc:delete-file", filePath),
-  moveFile: (sourcePath, destFolderPath) =>
-    ipcRenderer.invoke("disc:move-file", { sourcePath, destFolderPath }),
-  enterCompactMode: () => ipcRenderer.send("disc:enter-compact-mode"),
-  exitCompactMode: () => ipcRenderer.send("disc:exit-compact-mode"),
-  getMemoryLimit: () => ipcRenderer.invoke("disc:get-memory-limit"),
-  setMemoryLimit: (memoryLimitMb) =>
-    ipcRenderer.invoke("disc:set-memory-limit", memoryLimitMb),
-  getThreadPoolSize: () => ipcRenderer.invoke("disc:get-thread-pool-size"),
-  setThreadPoolSize: (threadPoolSize) =>
-    ipcRenderer.invoke("disc:set-thread-pool-size", threadPoolSize),
-  getCpuCount: () => ipcRenderer.invoke("disc:get-cpu-count"),
-  getAcrylicEnabled: () => ipcRenderer.invoke("disc:get-acrylic-enabled"),
-  setAcrylicEnabled: (enabled) => ipcRenderer.invoke("disc:set-acrylic-enabled", enabled),
-  isAcrylicWindowActive: () => ipcRenderer.invoke("disc:is-acrylic-window-active"),
-  supportsAcrylic: () => ipcRenderer.invoke("disc:supports-acrylic"),
-  getAppVersion: () => ipcRenderer.invoke("disc:get-app-version"),
-  statPath: (targetPath) => ipcRenderer.invoke("disc:stat-path", targetPath),
-  chooseConvertibleFiles: () => ipcRenderer.invoke("disc:choose-convertible-files"),
-  chooseImage: () => ipcRenderer.invoke("disc:choose-image"),
-  chooseConvertibleFolder: () => ipcRenderer.invoke("disc:choose-convertible-folder"),
-  scanForConvertible: (rootDir) => ipcRenderer.invoke("disc:scan-for-convertible", rootDir),
-  writeConvertedMp3: (destFolder, fileName, bytes) =>
-    ipcRenderer.invoke("disc:write-converted-mp3", { destFolder, fileName, bytes }),
-  writeSectionAudio: (trackFilePath, fileName, bytes) =>
-    ipcRenderer.invoke("disc:write-section-audio", { trackFilePath, fileName, bytes }),
-  sectionAudioExists: (trackFilePath, fileName) =>
-    ipcRenderer.invoke("disc:section-audio-exists", { trackFilePath, fileName }),
-  deleteSectionAudio: (trackFilePath, fileName) =>
-    ipcRenderer.invoke("disc:delete-section-audio", { trackFilePath, fileName }),
-  relaunchApp: () => ipcRenderer.send("disc:relaunch"),
-  checkForUpdates: () => ipcRenderer.invoke("disc:check-for-updates"),
-  downloadAndInstallUpdate: (downloadUrl, assetName) =>
-    ipcRenderer.invoke("disc:download-and-install-update", { downloadUrl, assetName }),
-  listProfiles: () => ipcRenderer.invoke("disc:list-profiles"),
-  saveProfile: (profileName, data, fileName) =>
-    ipcRenderer.invoke("disc:save-profile", { profileName, data, fileName }),
-  loadProfile: (fileName) => ipcRenderer.invoke("disc:load-profile", fileName),
-  renameProfile: (fileName, newName) =>
-    ipcRenderer.invoke("disc:rename-profile", { fileName, newName }),
-  deleteProfile: (fileName) => ipcRenderer.invoke("disc:delete-profile", fileName),
-  exportProfileToFile: (profileName, data) =>
-    ipcRenderer.invoke("disc:export-profile-to-file", { profileName, data }),
-  exportProfileWithMusic: (profileName, data, tracks) =>
-    ipcRenderer.invoke("disc:export-profile-with-music", { profileName, data, tracks }),
-  importProfileFromFile: () => ipcRenderer.invoke("disc:import-profile-from-file"),
-  openDevTools: () => ipcRenderer.invoke("disc:open-devtools"),
-  revealCrashLog: () => ipcRenderer.invoke("disc:reveal-crash-log"),
-  readRecentCrashes: () => ipcRenderer.invoke("disc:read-recent-crashes"),
-  diagnoseTrack: (filePath) => ipcRenderer.invoke("disc:diagnose-track", filePath),
-  repairTrackFile: (filePath, bytes) =>
-    ipcRenderer.invoke("disc:repair-track-file", { filePath, bytes }),
-  getDeviceIdentity: () => ipcRenderer.invoke("disc:get-device-identity"),
-  setDeviceName: (name) => ipcRenderer.invoke("disc:set-device-name", name),
-  appendSyncEvents: (rootDir, deviceId, events) =>
-    ipcRenderer.invoke("disc:append-sync-events", { rootDir, deviceId, events }),
-  readSyncState: (rootDir) => ipcRenderer.invoke("disc:read-sync-state", rootDir),
-  writeDeviceMeta: (rootDir, id, name) =>
-    ipcRenderer.invoke("disc:write-device-meta", { rootDir, id, name }),
 });

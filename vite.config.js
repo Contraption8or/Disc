@@ -6,7 +6,7 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   server: {
-    port: 5173,
+    port: 5174,
     strictPort: true,
     // electron-builder writes packaged builds here (release/win-unpacked/*),
     // including locked .exe files mid-build — Vite's watcher has no reason

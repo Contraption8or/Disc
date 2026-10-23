@@ -1,4 +1,60 @@
-@import "./themes/themes.css";
+/* Disc Lite: one fixed black-and-white palette — no themes, effects, or
+   animations beyond simple hover fades. */
+:root {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --bg-app: #000000;
+  --bg-panel: #070707;
+  --bg-panel-alt: #101010;
+  --bg-hover: #1a1a1a;
+  --bg-active: #262626;
+  --border-color: #2a2a2a;
+  --text-primary: #ffffff;
+  --text-secondary: #a8a8a8;
+  --text-tertiary: #6b6b6b;
+  --accent: #ffffff;
+  --accent-hover: #d6d6d6;
+  --accent-text: #000000;
+  --waveform: #3d3d3d;
+  --waveform-progress: #ffffff;
+  --favorite: #ffffff;
+  --danger: #ef5b5b;
+
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --focus-ring: 0 0 0 2px rgba(255, 255, 255, 0.35);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --titlebar-bg: #000000;
+
+  /* Fixed width of the left folder column — it never grows or shrinks with
+     the window. */
+  --sidebar-width: 260px;
+}
+
+button,
+input,
+select,
+a {
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+svg {
+  vertical-align: middle;
+}
 
 * {
   box-sizing: border-box;

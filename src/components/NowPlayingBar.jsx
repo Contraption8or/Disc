@@ -2,9 +2,13 @@ import { useRef } from "react";
 import { useDisc } from "../context/DiscContext.jsx";
 import { useVisualTick } from "../hooks/useVisualTick.js";
 import { stripExtension } from "../utils/format.js";
+import VolumeControl from "./VolumeControl.jsx";
 import Icon from "./Icon.jsx";
 import "./NowPlayingBar.css";
 
+// The bottom bar: transport controls, what's playing, shuffle, and volume.
+// Always rendered (showing "Nothing playing" when idle) so the layout above
+// it doesn't jump when the first track starts.
 export default function NowPlayingBar() {
   const {
     allTracks,
@@ -12,8 +16,6 @@ export default function NowPlayingBar() {
     isPlaying,
     duration,
     togglePlayPause,
-    playTrackSection,
-    trackSections,
     getCurrentTime,
     queueTrackIds,
     queueIndex,
@@ -21,6 +23,8 @@ export default function NowPlayingBar() {
     onPlayNext,
     onPlayPrev,
     onToggleShuffle,
+    volume,
+    setVolume,
   } = useDisc();
 
   const progressRef = useRef(null);
@@ -28,13 +32,11 @@ export default function NowPlayingBar() {
 
   // Paused: leave the bar exactly where it is. Driven directly (not React
   // state) so it doesn't re-render per frame; see useVisualTick for why it
-  // slows down while Disc isn't the focused window.
+  // slows down while the window isn't focused.
   useVisualTick(() => {
     const pct = duration > 0 ? Math.min(100, (getCurrentTime() / duration) * 100) : 0;
     if (progressRef.current) progressRef.current.style.width = `${pct}%`;
   }, Boolean(track) && isPlaying);
-
-  if (!track) return null;
 
   const hasQueue = queueTrackIds.length > 0;
 
@@ -44,42 +46,33 @@ export default function NowPlayingBar() {
         <div className="now-playing__progress-fill" ref={progressRef} />
       </div>
       <div className="now-playing__row">
-        {hasQueue && (
-          <button
-            className="now-playing__skip"
-            onClick={onPlayPrev}
-            disabled={queueIndex <= 0}
-            title="Previous"
-          >
-            <Icon name="skipBack" size={15} />
-          </button>
-        )}
+        <button
+          className="now-playing__skip"
+          onClick={onPlayPrev}
+          disabled={!hasQueue || queueIndex <= 0}
+          title="Previous"
+        >
+          <Icon name="skipBack" size={15} />
+        </button>
         <button
           className="now-playing__play"
-          onClick={(e) => {
-            if (e.ctrlKey || e.metaKey) {
-              playTrackSection(track, trackSections[track.id]);
-            } else if (e.shiftKey) {
-              togglePlayPause(track, { forceFromStart: true });
-            } else {
-              togglePlayPause(track);
-            }
-          }}
-          title={
-            (isPlaying ? "Pause" : "Play") +
-            " · Shift-click to restart · Ctrl-click to cycle marked sections"
-          }
+          disabled={!track}
+          onClick={(e) => track && togglePlayPause(track, { forceFromStart: e.shiftKey })}
+          title={isPlaying ? "Pause" : "Play"}
         >
           <Icon name={isPlaying ? "pause" : "play"} size={17} />
         </button>
-        {hasQueue && (
-          <button className="now-playing__skip" onClick={onPlayNext} title="Next">
-            <Icon name="skipForward" size={15} />
-          </button>
-        )}
+        <button
+          className="now-playing__skip"
+          onClick={onPlayNext}
+          disabled={!hasQueue}
+          title="Next"
+        >
+          <Icon name="skipForward" size={15} />
+        </button>
 
-        <div className="now-playing__name" title={track.fileName}>
-          {stripExtension(track.fileName)}
+        <div className="now-playing__name" title={track?.fileName}>
+          {track ? stripExtension(track.fileName) : "Nothing playing"}
         </div>
 
         {hasQueue && (
@@ -89,14 +82,13 @@ export default function NowPlayingBar() {
         )}
 
         <button
-          className={
-            "now-playing__shuffle" + (shuffleEnabled ? " now-playing__shuffle--active" : "")
-          }
+          className={"now-playing__shuffle" + (shuffleEnabled ? " now-playing__shuffle--active" : "")}
           onClick={onToggleShuffle}
-          title={shuffleEnabled ? "Shuffle on" : "Shuffle off"}
+          title={shuffleEnabled ? "Shuffle on (S)" : "Shuffle off (S)"}
         >
           <Icon name="shuffle" size={15} />
         </button>
+        <VolumeControl volume={volume} onChange={setVolume} />
       </div>
     </div>
   );

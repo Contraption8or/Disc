@@ -49,7 +49,14 @@
   color: var(--text-tertiary);
 }
 
+.library-toolbar__spacer {
+  flex: 1 1 0;
+}
+
 .library-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
   height: 30px;
   white-space: nowrap;

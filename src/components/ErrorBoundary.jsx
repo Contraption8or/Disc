@@ -1,11 +1,5 @@
 import React from "react";
 
-// Layout-related keys that, when corrupted or from an incompatible older
-// version, are the most likely thing to crash startup — clearing just these
-// (never tracks, tags, notes, folders, or settings) is a safe "get me back
-// in" reset.
-const LAYOUT_KEYS = ["disc.layoutPresets", "disc.defaultLayoutName"];
-
 // Without this, any uncaught error while rendering unmounts the entire
 // React tree — the window goes blank (in a translucent theme, just a dark
 // pane of glass) with no message and no way to recover short of finding
@@ -22,17 +16,8 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    console.error("Disc crashed while rendering:", error, info?.componentStack);
+    console.error("Disc Lite crashed while rendering:", error, info?.componentStack);
   }
-
-  resetLayoutAndReload = () => {
-    try {
-      LAYOUT_KEYS.forEach((k) => localStorage.removeItem(k));
-    } catch {
-      // Storage unavailable — reloading is still worth trying.
-    }
-    window.location.reload();
-  };
 
   render() {
     const { error } = this.state;
@@ -48,7 +33,7 @@ export default class ErrorBoundary extends React.Component {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#1b1b1f",
+        background: "#000000",
         color: "#e8e8ea",
         fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
         padding: 24,
@@ -56,7 +41,7 @@ export default class ErrorBoundary extends React.Component {
       card: {
         maxWidth: 640,
         width: "100%",
-        background: "#232327",
+        background: "#0a0a0a",
         border: "1px solid #3a3a40",
         borderRadius: 12,
         padding: 24,
@@ -69,7 +54,7 @@ export default class ErrorBoundary extends React.Component {
         padding: 12,
         maxHeight: 200,
         overflow: "auto",
-        background: "#1b1b1f",
+        background: "#000000",
         border: "1px solid #3a3a40",
         borderRadius: 8,
         fontSize: 12,
@@ -81,22 +66,13 @@ export default class ErrorBoundary extends React.Component {
       },
       row: { display: "flex", gap: 10, flexWrap: "wrap" },
       primary: {
-        background: "#4f9dff",
-        color: "#0d1117",
+        background: "#ffffff",
+        color: "#000000",
         border: "none",
         borderRadius: 8,
         padding: "9px 16px",
         fontSize: 13,
         fontWeight: 600,
-        cursor: "pointer",
-      },
-      secondary: {
-        background: "transparent",
-        color: "#e8e8ea",
-        border: "1px solid #3a3a40",
-        borderRadius: 8,
-        padding: "9px 16px",
-        fontSize: 13,
         cursor: "pointer",
       },
     };
@@ -108,17 +84,13 @@ export default class ErrorBoundary extends React.Component {
         <div style={styles.card}>
           <h1 style={styles.title}>Disc hit a problem</h1>
           <p style={styles.body}>
-            Something went wrong while drawing the window. Your library, tags, notes, and
-            folders are untouched. Reloading usually fixes it; if it keeps happening,
-            resetting the panel layout is the next thing to try.
+            Something went wrong while drawing the window. Your music and folders are
+            untouched — reloading usually fixes it.
           </p>
           <pre style={styles.pre}>{detail}</pre>
           <div style={styles.row}>
             <button style={styles.primary} onClick={() => window.location.reload()}>
               Reload
-            </button>
-            <button style={styles.secondary} onClick={this.resetLayoutAndReload}>
-              Reset panel layout &amp; reload
             </button>
           </div>
         </div>

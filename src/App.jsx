@@ -1,837 +1,102 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DockviewReact } from "dockview";
-import "dockview/dist/styles/dockview.css";
 
 import TitleBar from "./components/TitleBar.jsx";
-import FolderGroupPanel from "./components/FolderGroupPanel.jsx";
-import CollectionsPanel from "./components/CollectionsPanel.jsx";
+import Sidebar from "./components/Sidebar.jsx";
 import LibraryPanel from "./components/LibraryPanel.jsx";
-import DetailsPanel from "./components/DetailsPanel.jsx";
-import CompactView from "./components/CompactView.jsx";
-import ShortcutsModal from "./components/ShortcutsModal.jsx";
-import SettingsModal from "./components/SettingsModal.jsx";
-import LibraryHealthModal from "./components/LibraryHealthModal.jsx";
-import ConfirmModal from "./components/ConfirmModal.jsx";
-import TagManagerModal from "./components/TagManagerModal.jsx";
-import ConvertModal from "./components/ConvertModal.jsx";
-import OggLinkPromptModal from "./components/OggLinkPromptModal.jsx";
-import CommandPalette from "./components/CommandPalette.jsx";
-import PomodoroPanel from "./components/PomodoroPanel.jsx";
-import ImagePanel from "./components/ImagePanel.jsx";
-import UpdateToast from "./components/UpdateToast.jsx";
-import { PomodoroProvider } from "./context/PomodoroContext.jsx";
+import NowPlayingBar from "./components/NowPlayingBar.jsx";
 import { DiscContext } from "./context/DiscContext.jsx";
-import { getTrackKey } from "./sync/trackKey.js";
-import { getRelativeFolderPath } from "./sync/folderPath.js";
-import { logSyncEvent, buildSyncEvent, writeSyncEventsNow } from "./sync/eventLog.js";
-import { mergeEvents } from "./sync/mergeEvents.js";
-import { THEMES, DEFAULT_THEME } from "./themes/themes.js";
-import { applyCustomThemeVars, clearCustomThemeVars } from "./themes/customThemeEngine.js";
-import { loadAppearance, saveAppearance } from "./appearance/appearanceStorage.js";
-import { applyAppearanceSettings } from "./appearance/applyAppearance.js";
-import { loadCustomThemes } from "./themes/customThemes.js";
-import {
-  loadLayoutPresets,
-  saveLayoutPresets,
-  loadDefaultLayoutName,
-  saveDefaultLayoutName,
-} from "./layouts/layoutPresets.js";
-import { loadTags, saveTags, loadTrackTags, saveTrackTags } from "./tags/tagStorage.js";
-import { loadTrackNotes, saveTrackNotes } from "./notes/noteStorage.js";
-import { loadTrackSections, saveTrackSections } from "./audio/sectionStorage.js";
-import { deleteSectionDrag } from "./audio/sectionDrag.js";
-import { loadCollections, saveCollections } from "./collections/collectionStorage.js";
 import { toMediaUrl } from "./utils/paths.js";
-import { loadShortcuts, saveShortcuts, DEFAULT_SHORTCUTS } from "./shortcuts/shortcutStorage.js";
-import { preloadLibrary, getPreloadCandidates } from "./audio/preload.js";
-import { convertToMp3 } from "./audio/audioConverter.js";
-import {
-  setMaxConcurrentDecodes,
-  DEFAULT_MAX_CONCURRENT_DECODES,
-  invalidateWaveform,
-} from "./audio/waveform.js";
 import "./App.css";
-import "./appearance/appearance.css";
-import "./appearance/motion.css";
-import "./appearance/bouncy.css";
 
-const THEME_STORAGE_KEY = "disc.theme";
-const FOLDER_STORAGE_KEY = "disc.musicFolder";
-const FAVORITES_STORAGE_KEY = "disc.favorites";
-const VOLUME_STORAGE_KEY = "disc.volume";
-const CUSTOM_FOLDERS_KEY = "disc.customFolders";
-const TRACK_ORDER_KEY = "disc.trackOrder";
-const FOLDER_GROUPS_KEY = "disc.folderGroups";
+const FOLDERS_KEY = "lite.folders";
+const FAVORITES_KEY = "disc.favorites";
+const VOLUME_KEY = "disc.volume";
+const SHUFFLE_KEY = "disc.shuffle";
+
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadFolders() {
+  const parsed = loadJson(FOLDERS_KEY, []);
+  return Array.isArray(parsed) ? parsed.filter((f) => f && f.id && f.folderPath) : [];
+}
+
+function folderNameFromPath(p) {
+  return p.split(/[\\/]/).filter(Boolean).pop() || p;
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 export default function App() {
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    if (!saved) return DEFAULT_THEME;
-    const isValid =
-      THEMES.some((t) => t.id === saved) || loadCustomThemes().some((t) => t.id === saved);
-    if (isValid) return saved;
-    // "premiere-light" and "mist" (both removed) migrate to "paper" — the
-    // one remaining light theme, and the closest match in spirit for
-    // either — rather than DEFAULT_THEME, so no one who deliberately chose
-    // a light theme gets unexpectedly dumped into a dark one. "frost"
-    // (renamed to "tron") migrates straight across — same theme, just a
-    // new id/label.
-    if (saved === "premiere-light" || saved === "mist") return "paper";
-    if (saved === "frost") return "tron";
-    return DEFAULT_THEME;
+  // --- Folders + tracks ----------------------------------------------
+  const [folders, setFolders] = useState(loadFolders);
+  const [folderTracks, setFolderTracks] = useState({});
+  const [missingFolderIds, setMissingFolderIds] = useState(() => new Set());
+  const [activeFolderId, setActiveFolderId] = useState("all"); // "all" | "favorites" | a folder id
+  const [favoriteIds, setFavoriteIds] = useState(() => {
+    const parsed = loadJson(FAVORITES_KEY, []);
+    return Array.isArray(parsed) ? parsed : [];
   });
   const [pinned, setPinned] = useState(false);
-  const [musicFolderPath, setMusicFolderPath] = useState(
-    () => localStorage.getItem(FOLDER_STORAGE_KEY) || ""
-  );
-  const [tracks, setTracks] = useState([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [favoriteIds, setFavoriteIds] = useState(() => {
-    try {
-      const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [layoutPresetNames, setLayoutPresetNames] = useState(
-    () => Object.keys(loadLayoutPresets())
-  );
-  const [defaultLayoutName, setDefaultLayoutName] = useState(loadDefaultLayoutName);
-  const [activeFolderId, setActiveFolderId] = useState("favorites");
-  // Holds { folderId, folderPath, convertiblePaths } between choosing a folder
-  // that turns out to have .ogg files in it and the person deciding what
-  // to do about it — see handleLinkFolderDirectory below and
-  // OggLinkPromptModal.jsx.
-  const [pendingOggLink, setPendingOggLink] = useState(null);
-  // Manual drag-to-reorder within a single folder (or Favorites) — only
-  // ever consulted when sort is set to "Folder order"; any other sort
-  // mode ignores this entirely, since dragging to reorder wouldn't mean
-  // anything while the list is actively being sorted by something else.
-  const [trackOrder, setTrackOrder] = useState(() => {
-    try {
-      const raw = localStorage.getItem(TRACK_ORDER_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
+  const watchedIdsRef = useRef(new Set());
 
   useEffect(() => {
-    localStorage.setItem(TRACK_ORDER_KEY, JSON.stringify(trackOrder));
-  }, [trackOrder]);
-
-  const handleReorderTracks = useCallback((folderKey, orderedIds) => {
-    setTrackOrder((prev) => ({ ...prev, [folderKey]: orderedIds }));
-  }, []);
-  const [customFolders, setCustomFolders] = useState(() => {
-    try {
-      const raw = localStorage.getItem(CUSTOM_FOLDERS_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      // Folders saved before the folder-groups feature existed don't have
-      // a groupId yet — put them all in the primary group so nothing goes
-      // missing. Similarly, items from before Sections could nest don't
-      // have a sectionId (null = top-level, not nested under anything —
-      // this now applies to Sections themselves too, not just folders,
-      // since Sections can nest inside other Sections), and dividers from
-      // before collapsing existed don't have a collapsed flag (default:
-      // expanded, so nothing looks different for anyone updating from an
-      // older version).
-      return parsed.map((f) => {
-        let next = f.groupId ? f : { ...f, groupId: "primary" };
-        if (next.type === "divider" && next.collapsed === undefined) {
-          next = { ...next, collapsed: false };
-        }
-        if (next.sectionId === undefined) {
-          next = { ...next, sectionId: null };
-        }
-        return next;
-      });
-    } catch {
-      return [];
-    }
-  });
-  const [folderGroups, setFolderGroups] = useState(() => {
-    try {
-      const raw = localStorage.getItem(FOLDER_GROUPS_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (parsed && parsed.length > 0) return parsed;
-    } catch {
-      // fall through to default below
-    }
-    return [{ id: "primary", name: "Music", deletable: false }];
-  });
-  // A just-deleted group, kept around briefly so it can be undone — see
-  // handleDeleteFolderGroup/handleUndoDeleteFolderGroup below.
-  const [pendingDeletedGroup, setPendingDeletedGroup] = useState(null); // { group, folders } | null
-  const [showSavedToast, setShowSavedToast] = useState(false);
-  const savedToastTimeoutRef = useRef(null);
-  const undoGroupTimeoutRef = useRef(null);
-  // Repair Track (right-click a track) — see handleRepairTrack below.
-  const [repairConfirm, setRepairConfirm] = useState(null); // { trackId, diagnosis } | null
-  const [repairProgress, setRepairProgress] = useState(null); // { trackId, fraction } | null
-  const [toastMessage, setToastMessage] = useState(null);
-  const toastTimeoutRef = useRef(null);
-  const showToast = useCallback((message) => {
-    setToastMessage(message);
-    clearTimeout(toastTimeoutRef.current);
-    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 3000);
-  }, []);
-  // A just-deleted tag, kept around briefly so it can be undone — see
-  // handleDeleteTag/handleUndoDeleteTag below.
-  const [pendingDeletedTag, setPendingDeletedTag] = useState(null); // { tag, trackIds } | null
-  const undoTagTimeoutRef = useRef(null);
-  const [customFolderTracks, setCustomFolderTracks] = useState({});
-  const customFolderTracksRef = useRef(customFolderTracks);
-  customFolderTracksRef.current = customFolderTracks;
-  const watchedCustomIdsRef = useRef(new Set());
-
-  // --- Tagging state --------------------------------------------------
-  const [tags, setTags] = useState(loadTags);
-  const [trackTags, setTrackTags] = useState(loadTrackTags);
-
-  // --- Notes (freeform per-track text) --------------------------------
-  const [trackNotes, setTrackNotes] = useState(loadTrackNotes);
-  // Marked in/out sections per track — { [trackId]: [{ id, startFraction,
-  // endFraction }, ...] }. Stored as fractions of duration (0-1) rather
-  // than absolute seconds so a section stays correct regardless of
-  // whether the track's metadata happens to be loaded at read time.
-  const [trackSections, setTrackSections] = useState(loadTrackSections);
-  const [healthFilter, setHealthFilter] = useState(null); // null | 'untagged' | 'missing' | 'duplicates'
-  const [tagFilterId, setTagFilterId] = useState(null); // null | a tag id — "show only tracks with this tag"
-
-  // --- Bulk library preload (waveforms for everything) -------------------
-  // Lives at the App level (not inside the Settings modal) so it keeps
-  // running — and its progress keeps updating — even if Settings gets
-  // closed while it's mid-run.
-  const [preloadState, setPreloadState] = useState({
-    status: "idle", // "idle" | "running" | "done" | "cancelled"
-    completed: 0,
-    total: 0,
-    startedAt: null,
-  });
-  const preloadCancelRef = useRef(false);
-  const [preloadConcurrency, setPreloadConcurrency] = useState(
-    () => Number(localStorage.getItem("disc.preloadConcurrency")) || DEFAULT_MAX_CONCURRENT_DECODES
-  );
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+  }, [folders]);
 
   useEffect(() => {
-    localStorage.setItem("disc.preloadConcurrency", String(preloadConcurrency));
-  }, [preloadConcurrency]);
-
-  const [collections, setCollections] = useState(loadCollections);
-  const [shortcuts, setShortcuts] = useState(loadShortcuts);
-  const shortcutsRef = useRef(shortcuts);
-  shortcutsRef.current = shortcuts;
-
-  // --- Missing-folder detection ---------------------------------------
-  // Keys are "main" or a custom folder's id. A folder lands here when its
-  // root directory can't be reached (e.g. an unplugged external drive) —
-  // its last-known tracks are kept in view (marked unavailable) instead
-  // of silently vanishing.
-  const [missingFolderIds, setMissingFolderIds] = useState(() => new Set());
-
-  // --- Compact mode -----------------------------------------------------
-  const [compactMode, setCompactMode] = useState(false);
-  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
-  const [healthModalOpen, setHealthModalOpen] = useState(false);
-  const [convertModalOpen, setConvertModalOpen] = useState(false);
-  const [tagManagerModalOpen, setTagManagerModalOpen] = useState(false);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-
-  // --- Playback queue (for Play All / Shuffle) ------------------------
-  const [queueTrackIds, setQueueTrackIds] = useState([]);
-  const [queueIndex, setQueueIndex] = useState(-1);
-  const [shuffleEnabled, setShuffleEnabled] = useState(
-    () => localStorage.getItem("disc.shuffle") === "true"
-  );
-  const queueRef = useRef({ ids: [], index: -1 });
-  const allTracksRef = useRef([]);
-  const playNextRef = useRef(() => {});
-
-  // Bumped as a bulk preload fills the waveform cache (which lives in a
-  // plain module-level cache, not React state) so anything sorted by a
-  // cached value — duration — knows to re-check it.
-  const [waveformTick, setWaveformTick] = useState(0);
-  const handleWaveformCacheUpdated = useCallback(() => {
-    setWaveformTick((v) => v + 1);
-  }, []);
-
-  const handleStartPreload = useCallback(() => {
-    if (preloadState.status === "running") return;
-    preloadCancelRef.current = false;
-    setPreloadState({ status: "running", completed: 0, total: 0, startedAt: Date.now() });
-
-    // Normal browsing always stays at the conservative default cap — this
-    // bump only applies for the duration of this explicit, deliberate
-    // preload run, and is always restored below no matter how it ends.
-    setMaxConcurrentDecodes(preloadConcurrency);
-
-    let ticksSinceRefresh = 0;
-    preloadLibrary(allTracksRef.current, {
-      shouldCancel: () => preloadCancelRef.current,
-      onProgress: ({ completed, total }) => {
-        setPreloadState((prev) => ({ ...prev, completed, total }));
-        // Bump the tick periodically (not on every single track) so a
-        // duration sort refreshes as data streams in, without
-        // re-rendering on every single completion for a library that
-        // might be thousands deep.
-        ticksSinceRefresh += 1;
-        if (ticksSinceRefresh >= 15) {
-          ticksSinceRefresh = 0;
-          handleWaveformCacheUpdated();
-        }
-      },
-    })
-      .then(({ cancelled }) => {
-        handleWaveformCacheUpdated();
-        setPreloadState((prev) => ({
-          ...prev,
-          status: cancelled ? "cancelled" : "done",
-        }));
-      })
-      .catch(() => {
-        setPreloadState((prev) => ({ ...prev, status: "cancelled" }));
-      })
-      .finally(() => {
-        setMaxConcurrentDecodes(DEFAULT_MAX_CONCURRENT_DECODES);
-      });
-  }, [preloadState.status, preloadConcurrency, handleWaveformCacheUpdated]);
-
-  const handleCancelPreload = useCallback(() => {
-    preloadCancelRef.current = true;
-  }, []);
-
-  const handleResetPreload = useCallback(() => {
-    setPreloadState({ status: "idle", completed: 0, total: 0, startedAt: null });
-  }, []);
-
-  // --- Playback state -----------------------------------------------
-  const audioRef = useRef(null);
-  if (!audioRef.current && typeof Audio !== "undefined") {
-    audioRef.current = new Audio();
-  }
-  const currentTrackRef = useRef(null);
-  // Guards against a slow-to-resolve loadAndPlay call finishing *after* a
-  // newer one has already taken over — without this, clicking through
-  // tracks quickly could let a stale call overwrite currentTrackRef back
-  // to the wrong track. See loadAndPlay below for how it's used.
-  const loadRequestIdRef = useRef(0);
-  const [currentTrackId, setCurrentTrackId] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [selectedTrackId, setSelectedTrackId] = useState(null);
-  const [volume, setVolume] = useState(() => {
-    const raw = localStorage.getItem(VOLUME_STORAGE_KEY);
-    return raw !== null ? Number(raw) : 0.8;
-  });
-
-  const dockApiRef = useRef(null);
-  // Holds each dockview group's bounding rect from just before the most
-  // recent drag-to-move, so the bouncy-animations FLIP slide (see
-  // onDockviewReady below) has a "before" to animate away from.
-  const groupRectsBeforeMoveRef = useRef(new Map());
-  const musicFolderPathRef = useRef(musicFolderPath);
-  musicFolderPathRef.current = musicFolderPath;
-
-  // --- Studio Sync: device identity + event log (Phase 2, write-only —
-  // see docs/collab-sync-scope.md) ---------------------------------------
-  const [deviceIdentity, setDeviceIdentity] = useState(null); // { id, name } | null while loading
-  const deviceIdRef = useRef(null);
-  const customFoldersRef = useRef(customFolders);
-  customFoldersRef.current = customFolders;
-  const trackTagsRef = useRef(trackTags);
-  trackTagsRef.current = trackTags;
-  const collectionsRef = useRef(collections);
-  collectionsRef.current = collections;
-  const tagsRef = useRef(tags);
-  tagsRef.current = tags;
-  const trackNotesRef = useRef(trackNotes);
-  trackNotesRef.current = trackNotes;
-
-  useEffect(() => {
-    window.disc?.getDeviceIdentity().then((identity) => {
-      deviceIdRef.current = identity?.id ?? null;
-      setDeviceIdentity(identity ?? null);
-    });
-  }, []);
-
-  const handleSetDeviceName = useCallback((name) => {
-    window.disc?.setDeviceName(name).then((identity) => {
-      deviceIdRef.current = identity?.id ?? null;
-      setDeviceIdentity(identity ?? null);
-    });
-  }, []);
-
-  // Every call site below already has trackId (a file path) in hand from
-  // its own arguments — this just wraps getTrackKey with the current
-  // folder context so call sites don't each have to thread it through.
-  const trackKeyFor = useCallback(
-    (trackId) =>
-      getTrackKey(trackId, {
-        musicFolderPath: musicFolderPathRef.current,
-        customFolders: customFoldersRef.current,
-      }),
-    []
-  );
-
-  // null means "outside the shared root, can't be safely linked on
-  // another machine" — see src/sync/folderPath.js.
-  const folderRelativePathFor = useCallback(
-    (folderPath) => getRelativeFolderPath(folderPath, musicFolderPathRef.current),
-    []
-  );
-
-  const logEvent = useCallback((type, payload) => {
-    logSyncEvent(
-      { musicFolderPath: musicFolderPathRef.current, deviceId: deviceIdRef.current },
-      type,
-      payload
-    );
-  }, []);
-
-  // --- Studio Sync: read + merge path (Phase 3) --------------------------
-  const folderGroupsRef = useRef(folderGroups);
-  folderGroupsRef.current = folderGroups;
-
-  const [studioSyncEnabled, setStudioSyncEnabled] = useState(
-    () => localStorage.getItem("disc.studioSyncEnabled") === "true"
-  );
-  useEffect(() => {
-    localStorage.setItem("disc.studioSyncEnabled", String(studioSyncEnabled));
-  }, [studioSyncEnabled]);
-
-  const [syncStatus, setSyncStatus] = useState({
-    lastSyncedAt: null,
-    deviceNames: {},
-    deviceCount: 0,
-  });
-
-  // Publishes this device's name into the shared folder so other machines
-  // can show it instead of a raw id (see disc:write-device-meta).
-  useEffect(() => {
-    if (!studioSyncEnabled || !musicFolderPath || !deviceIdentity?.id) return;
-    window.disc?.writeDeviceMeta(musicFolderPath, deviceIdentity.id, deviceIdentity.name);
-  }, [studioSyncEnabled, musicFolderPath, deviceIdentity]);
-
-  // Reconciles freshly-merged folders/groups against current local state.
-  // Fields Phase 3 actually syncs (name, color, link state) come from the
-  // merge; fields it deliberately doesn't (position, group/section
-  // membership, collapsed state — see the "not yet synced" list in
-  // docs/collab-sync-scope.md) are preserved from whatever's already
-  // here, so a local drag-reorder can't be silently reverted by some
-  // unrelated remote change re-triggering a merge. A folder/group never
-  // seen locally before uses the merge's own placement, since there's no
-  // local position to preserve yet.
-  const applyMergedFolders = useCallback((mergedFolders, mergedGroups) => {
-    const mergedFolderById = new Map(mergedFolders.map((f) => [f.id, f]));
-    const seenFolderIds = new Set();
-    const reconciledFolders = [];
-    customFoldersRef.current.forEach((prev) => {
-      const merged = mergedFolderById.get(prev.id);
-      if (!merged) return; // deleted, locally or remotely
-      seenFolderIds.add(prev.id);
-      reconciledFolders.push({
-        ...prev,
-        name: merged.name,
-        color: merged.color,
-        folderPath: merged.folderPath,
-      });
-    });
-    mergedFolders.forEach((f) => {
-      if (!seenFolderIds.has(f.id)) reconciledFolders.push(f);
-    });
-    setCustomFolders(reconciledFolders);
-
-    const mergedGroupById = new Map(mergedGroups.map((g) => [g.id, g]));
-    const seenGroupIds = new Set();
-    const reconciledGroups = [];
-    folderGroupsRef.current.forEach((prev) => {
-      // "primary" is built-in — it never gets a folderGroup.create event,
-      // so it's never present in a merge result on its own account.
-      if (prev.id === "primary") {
-        reconciledGroups.push(mergedGroupById.get("primary") ?? prev);
-        seenGroupIds.add("primary");
-        return;
-      }
-      const merged = mergedGroupById.get(prev.id);
-      if (!merged) {
-        dockApiRef.current?.getPanel(`folder-group-${prev.id}`)?.api?.close?.();
-        return;
-      }
-      seenGroupIds.add(prev.id);
-      reconciledGroups.push({ ...prev, name: merged.name });
-    });
-    mergedGroups.forEach((g) => {
-      if (seenGroupIds.has(g.id)) return;
-      reconciledGroups.push(g);
-      // A group that showed up via merge and wasn't here before needs an
-      // actual panel to be usable — same call handleCreateFolderGroup
-      // makes for a locally-created one.
-      dockApiRef.current?.addPanel({
-        id: `folder-group-${g.id}`,
-        component: "folderGroup",
-        title: g.name,
-        params: { groupId: g.id },
-        position: { referencePanel: "library", direction: "left" },
-      });
-    });
-    setFolderGroups(reconciledGroups);
-  }, []);
-
-  // Reads every device's event log, replays it, and applies the result —
-  // safe to call as often as needed (idempotent), including right after
-  // this device's own mutations, since replaying the same events always
-  // produces the same state.
-  const runMerge = useCallback(async () => {
-    const rootDir = musicFolderPathRef.current;
-    if (!rootDir || !window.disc) return;
-    const { events, deviceNames } = await window.disc.readSyncState(rootDir);
-    const result = mergeEvents(events, {
-      musicFolderPath: rootDir,
-      customFolders: customFoldersRef.current,
-    });
-    setTags(result.tags);
-    setTrackTags(result.trackTags);
-    setCollections(result.collections);
-    setTrackNotes(result.trackNotes);
-    applyMergedFolders(result.folders, result.folderGroups);
-    setSyncStatus({
-      lastSyncedAt: Date.now(),
-      deviceNames,
-      deviceCount: new Set(events.map((e) => e.device)).size,
-    });
-  }, [applyMergedFolders]);
-
-  // The event log only ever captures *new* mutations from whenever
-  // Studio Sync first shipped — anything that already existed locally
-  // before that has no corresponding create/assign event. Since a merge
-  // fully rebuilds shared state from the event log alone, enabling Studio
-  // Sync without this step would silently wipe out any pre-existing
-  // tags/collections/notes/folders that predate the log (this actually
-  // happened once, during development — see the "Devices seen" recovery
-  // note in docs/collab-sync-scope.md). Runs once per device, tracked by
-  // a local-only flag (not synced); a later enable, or a merge triggered
-  // afterward, doesn't repeat it.
-  const BACKFILL_KEY = "disc.sync.backfilled";
-  const backfillLocalStateIfNeeded = useCallback(async () => {
-    if (localStorage.getItem(BACKFILL_KEY) === "true") return;
-    const deviceId = deviceIdRef.current;
-    const rootDir = musicFolderPathRef.current;
-    if (!deviceId || !rootDir) return;
-
-    const events = [];
-    const add = (type, payload) => events.push(buildSyncEvent(deviceId, type, payload));
-
-    tagsRef.current.forEach((tag) =>
-      add("tag.create", { tagId: tag.id, name: tag.name, color: tag.color })
-    );
-
-    Object.entries(trackTagsRef.current).forEach(([trackId, tagIds]) => {
-      const trackKey = trackKeyFor(trackId);
-      if (!trackKey) return;
-      tagIds.forEach((tagId) => add("tag.assign", { trackKey, tagId }));
-    });
-
-    collectionsRef.current.forEach((c) => {
-      add("collection.create", { collectionId: c.id, name: c.name, color: c.color ?? null });
-      (c.trackIds || []).forEach((trackId) => {
-        const trackKey = trackKeyFor(trackId);
-        if (trackKey) add("collection.addTrack", { collectionId: c.id, trackKey });
-      });
-    });
-
-    Object.entries(trackNotesRef.current).forEach(([trackId, text]) => {
-      const trackKey = trackKeyFor(trackId);
-      if (trackKey) add("note.set", { trackKey, text });
-    });
-
-    folderGroupsRef.current.forEach((g) => {
-      if (g.id === "primary") return; // built-in, never has its own create event
-      add("folderGroup.create", { groupId: g.id, name: g.name });
-    });
-
-    customFoldersRef.current.forEach((f) => {
-      add("folder.create", {
-        folderId: f.id,
-        kind: f.type === "divider" ? "section" : "folder",
-        name: f.name,
-        color: f.color ?? null,
-        groupId: f.groupId,
-        sectionId: f.sectionId ?? null,
-      });
-      if (f.folderPath) {
-        const relativePath = folderRelativePathFor(f.folderPath);
-        if (relativePath !== null) add("folder.link", { folderId: f.id, relativePath });
-      }
-    });
-
-    if (events.length > 0) {
-      await writeSyncEventsNow(rootDir, deviceId, events);
-    }
-    localStorage.setItem(BACKFILL_KEY, "true");
-  }, [trackKeyFor, folderRelativePathFor]);
-
-  // Backfills once (a no-op after the first time), then merges — on
-  // enabling Studio Sync, and whenever the shared folder itself changes
-  // while it's on, to pick up anything that happened while this device
-  // was off/closed.
-  //
-  // Waits on deviceIdentity specifically (not just studioSyncEnabled +
-  // musicFolderPath) — deviceIdentity loads via an async IPC call in a
-  // separate effect, so on a cold start with Studio Sync already enabled
-  // from a previous session, this effect would otherwise fire before that
-  // IPC call resolves. backfillLocalStateIfNeeded silently no-ops without
-  // a device id (correctly — it can't attribute events to a device it
-  // doesn't have), but runMerge would still run right after it via the
-  // .then(), applying whatever's in the shared log — including nothing
-  // at all, on a device's first-ever enable, before backfill ever gets a
-  // real chance to run. That's exactly the class of bug the backfill step
-  // exists to prevent (see the incident in docs/collab-sync-scope.md
-  // §7.5) — just reached via a startup race instead of a first-run one.
-  useEffect(() => {
-    if (!studioSyncEnabled || !deviceIdentity?.id) return;
-    backfillLocalStateIfNeeded().then(runMerge);
-  }, [studioSyncEnabled, musicFolderPath, deviceIdentity, runMerge, backfillLocalStateIfNeeded]);
-
-  // Live updates: the main music folder is already watched recursively
-  // for track changes (see the "main" rescan effect above) — that same
-  // watch fires for anything written under .disc-sync too, so this reuses
-  // it rather than adding a second recursive watcher over the same tree.
-  useEffect(() => {
-    if (!window.disc || !studioSyncEnabled) return;
-    return window.disc.onFolderChanged((key) => {
-      if (key === "main") runMerge();
-    });
-  }, [studioSyncEnabled, runMerge]);
-
-  const applyThemeById = useCallback((id) => {
-    const custom = loadCustomThemes().find((t) => t.id === id);
-    if (custom) {
-      clearCustomThemeVars();
-      document.documentElement.setAttribute("data-theme", "custom");
-      applyCustomThemeVars(custom.base);
-    } else {
-      clearCustomThemeVars();
-      document.documentElement.setAttribute("data-theme", id);
-      // Capture this built-in theme's true flat colors as stable "-base"
-      // vars (see the comment in customThemeEngine.js) — reading via
-      // getComputedStyle here, right after the attribute switch and
-      // right after clearing any leftover custom-theme inline styles,
-      // correctly reflects this theme's genuine CSS-rule-defined color.
-      const computed = getComputedStyle(document.documentElement);
-      const rootStyle = document.documentElement.style;
-      ["--bg-app", "--bg-panel", "--bg-panel-alt"].forEach((v) => {
-        rootStyle.setProperty(`${v}-base`, computed.getPropertyValue(v).trim());
-      });
-    }
-    // Lets the window-snap preview (see electron/main.js) match whatever
-    // theme is active — only the renderer can read the real computed
-    // --accent, so it's reported over IPC rather than main.js guessing.
-    window.disc?.setSnapAccentColor(
-      getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()
-    );
-  }, []);
-
-  useEffect(() => {
-    applyThemeById(theme);
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme, applyThemeById]);
-
-  // --- Appearance settings (spill, gradient, clean mode, reduce motion) --
-  const [appearanceSettings, setAppearanceSettings] = useState(loadAppearance);
-
-  const handleSetAppearance = useCallback((updates) => {
-    setAppearanceSettings((prev) => ({ ...prev, ...updates }));
-  }, []);
-
-  useEffect(() => {
-    saveAppearance(appearanceSettings);
-  }, [appearanceSettings]);
-
-  // Runs after the theme effect above (declared later, so it always
-  // re-applies on top) — gradient mode needs to read the theme's actual
-  // resolved colors, so it has to run whenever either theme or these
-  // settings change.
-  useEffect(() => {
-    applyAppearanceSettings(appearanceSettings);
-  }, [appearanceSettings, theme]);
-
-  useEffect(() => {
-    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteIds));
   }, [favoriteIds]);
 
-  useEffect(() => {
-    localStorage.setItem(CUSTOM_FOLDERS_KEY, JSON.stringify(customFolders));
-  }, [customFolders]);
-
-  useEffect(() => {
-    localStorage.setItem(FOLDER_GROUPS_KEY, JSON.stringify(folderGroups));
-  }, [folderGroups]);
-
-  useEffect(() => {
-    saveTags(tags);
-  }, [tags]);
-
-  useEffect(() => {
-    saveTrackTags(trackTags);
-  }, [trackTags]);
-
-  useEffect(() => {
-    saveTrackNotes(trackNotes);
-  }, [trackNotes]);
-
-  useEffect(() => {
-    saveTrackSections(trackSections);
-  }, [trackSections]);
-
-  useEffect(() => {
-    saveCollections(collections);
-  }, [collections]);
-
-  useEffect(() => {
-    saveShortcuts(shortcuts);
-  }, [shortcuts]);
-
-  useEffect(() => {
-    localStorage.setItem("disc.shuffle", String(shuffleEnabled));
-  }, [shuffleEnabled]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    function handlePlay() {
-      setIsPlaying(true);
-    }
-    function handlePause() {
-      setIsPlaying(false);
-    }
-    function handleEnded() {
-      setIsPlaying(false);
-      playNextRef.current();
-    }
-    function handleLoadedMetadata() {
-      setDuration(audio.duration || 0);
-    }
-    // Not routed into any UI — just a console breadcrumb so a real playback
-    // failure (missing codec, unreadable file, a disconnected network
-    // drive mid-stream) shows up as something diagnosable rather than
-    // silent dead air.
-    function handleError() {
-      console.error("Disc: audio playback error", audio.error);
-    }
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("error", handleError);
-    return () => {
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("error", handleError);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-    // The actual volume change is applied instantly above — only the
-    // localStorage write (synchronous, and not something that needs to
-    // happen on literally every tick of a slider drag) is debounced.
-    const timer = setTimeout(() => {
-      localStorage.setItem(VOLUME_STORAGE_KEY, String(volume));
-    }, 200);
-    return () => clearTimeout(timer);
-  }, [volume]);
-
-  // Records whether a scan succeeded or the root was unreachable, without
-  // clobbering already-known tracks when it wasn't.
-  const applyScanResult = useCallback((key, found, setter) => {
-    if (found === null) {
-      setMissingFolderIds((prev) => {
-        if (prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.add(key);
-        return next;
-      });
-      return;
-    }
+  // Scans one folder. A null result means the directory itself is
+  // unreachable (an unplugged drive, say) — keep the last-known tracks and
+  // just flag it, rather than making them vanish.
+  const scanOne = useCallback(async (folder) => {
+    if (!window.disc || !folder?.folderPath) return;
+    const found = await window.disc.scanFolder(folder.folderPath);
     setMissingFolderIds((prev) => {
-      if (!prev.has(key)) return prev;
+      const isMissing = found === null;
+      if (prev.has(folder.id) === isMissing) return prev;
       const next = new Set(prev);
-      next.delete(key);
+      if (isMissing) next.add(folder.id);
+      else next.delete(folder.id);
       return next;
     });
-    setter(found);
+    if (found !== null) setFolderTracks((prev) => ({ ...prev, [folder.id]: found }));
   }, []);
 
-  const rescan = useCallback(async () => {
-    const folder = musicFolderPathRef.current;
-    if (!folder || !window.disc) return;
-    setIsScanning(true);
-    try {
-      const found = await window.disc.scanFolder(folder);
-      applyScanResult("main", found, setTracks);
-    } finally {
-      setIsScanning(false);
-    }
-  }, [applyScanResult]);
+  const scanAll = useCallback(() => {
+    foldersRef.current.forEach((f) => scanOne(f));
+  }, [scanOne]);
 
-  // Scan (and (re-)watch) whenever the chosen music folder changes.
-  useEffect(() => {
-    if (!musicFolderPath || !window.disc) {
-      setTracks([]);
-      return;
-    }
-    rescan();
-    window.disc.watchFolder("main", musicFolderPath);
-  }, [musicFolderPath, rescan]);
-
-  // Live-updates: when a watched folder changes on disk, rescan just that
-  // root — "main" is the music folder, anything else is a linked custom
-  // folder's id.
+  // Keep every folder scanned + watched, and stop watching removed ones.
   useEffect(() => {
     if (!window.disc) return;
-    return window.disc.onFolderChanged((key) => {
-      if (key === "main") {
-        rescan();
-        return;
-      }
-      const folder = customFolders.find((f) => f.id === key);
-      if (folder?.folderPath) {
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(key, found, (result) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [key]: result }))
-          );
-        });
-      }
-    });
-  }, [rescan, customFolders, applyScanResult]);
-
-  // Keep each linked custom folder scanned + watched, and stop watching
-  // anything that gets unlinked or deleted.
-  useEffect(() => {
-    if (!window.disc) return;
-
-    const currentLinkedIds = new Set(
-      customFolders.filter((f) => f.folderPath).map((f) => f.id)
-    );
-
-    customFolders.forEach((folder) => {
-      if (!folder.folderPath) return;
-      window.disc.scanFolder(folder.folderPath).then((found) => {
-        applyScanResult(folder.id, found, (result) =>
-          setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: result }))
-        );
-      });
+    const currentIds = new Set(folders.map((f) => f.id));
+    folders.forEach((folder) => {
+      if (watchedIdsRef.current.has(folder.id)) return;
+      scanOne(folder);
       window.disc.watchFolder(folder.id, folder.folderPath);
     });
-
-    for (const id of watchedCustomIdsRef.current) {
-      if (!currentLinkedIds.has(id)) {
+    for (const id of watchedIdsRef.current) {
+      if (!currentIds.has(id)) {
         window.disc.unwatchFolder(id);
-        setCustomFolderTracks((prev) => {
+        setFolderTracks((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
           delete next[id];
@@ -845,505 +110,161 @@ export default function App() {
         });
       }
     }
-    watchedCustomIdsRef.current = currentLinkedIds;
-  }, [customFolders, applyScanResult]);
+    watchedIdsRef.current = currentIds;
+  }, [folders, scanOne]);
+
+  // A watched folder changed on disk — rescan just that one.
+  useEffect(() => {
+    if (!window.disc) return;
+    return window.disc.onFolderChanged((key) => {
+      const folder = foldersRef.current.find((f) => f.id === key);
+      if (folder) scanOne(folder);
+    });
+  }, [scanOne]);
+
+  const allTracks = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const f of folders) {
+      for (const t of folderTracks[f.id] || []) {
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        out.push({ ...t, folderId: f.id });
+      }
+    }
+    return out;
+  }, [folders, folderTracks]);
+  const allTracksRef = useRef(allTracks);
+  allTracksRef.current = allTracks;
+
+  const handleAddFolders = useCallback(async () => {
+    if (!window.disc) return;
+    const picked = await window.disc.chooseFolders();
+    if (!picked || picked.length === 0) return;
+    const existing = new Set(foldersRef.current.map((f) => f.folderPath.toLowerCase()));
+    const fresh = picked
+      .filter((p) => !existing.has(p.toLowerCase()))
+      .map((p) => ({
+        id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: folderNameFromPath(p),
+        folderPath: p,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+    if (fresh.length === 0) return;
+    setFolders((prev) => [...prev, ...fresh]);
+    if (fresh.length === 1) setActiveFolderId(fresh[0].id);
+  }, []);
+
+  const handleRemoveFolder = useCallback((id) => {
+    setFolders((prev) => prev.filter((f) => f.id !== id));
+    setActiveFolderId((cur) => (cur === id ? "all" : cur));
+  }, []);
+
+  const handleRenameFolder = useCallback((id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
+  }, []);
 
   const handleToggleFavorite = useCallback((trackId) => {
     setFavoriteIds((prev) =>
-      prev.includes(trackId)
-        ? prev.filter((id) => id !== trackId)
-        : [...prev, trackId]
+      prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
     );
   }, []);
 
-  // Explicit set (not toggle) — used by batch actions so selecting several
-  // tracks and hitting "Add to Favorites" doesn't accidentally un-favorite
-  // ones that were already favorited.
-  const handleSetFavorite = useCallback((trackIds, shouldFavorite) => {
-    setFavoriteIds((prev) => {
-      const set = new Set(prev);
-      trackIds.forEach((id) => {
-        if (shouldFavorite) set.add(id);
-        else set.delete(id);
-      });
-      return Array.from(set);
-    });
-  }, []);
-
-  const handleSetTrackNote = useCallback((trackId, note) => {
-    setTrackNotes((prev) => {
-      if (!note.trim()) {
-        if (!(trackId in prev)) return prev;
-        const next = { ...prev };
-        delete next[trackId];
-        return next;
-      }
-      return { ...prev, [trackId]: note };
-    });
-    const trackKey = trackKeyFor(trackId);
-    if (trackKey) logEvent("note.set", { trackKey, text: note });
-  }, [logEvent, trackKeyFor]);
-
-
-  // Adds a new marked section for a track — startFraction/endFraction are
-  // both 0-1, position within the track's total duration. Sections stay
-  // in the order they were created; Ctrl+Click on Play cycles through
-  // them in that same order (see handlePlaySection below).
-  const handleAddTrackSection = useCallback((trackId, startFraction, endFraction) => {
-    const id = `section-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setTrackSections((prev) => ({
-      ...prev,
-      [trackId]: [...(prev[trackId] || []), { id, startFraction, endFraction }],
-    }));
-  }, []);
-
-  const handleDeleteTrackSection = useCallback((trackId, sectionId) => {
-    setTrackSections((prev) => {
-      const remaining = (prev[trackId] || []).filter((s) => s.id !== sectionId);
-      const next = { ...prev };
-      if (remaining.length === 0) delete next[trackId];
-      else next[trackId] = remaining;
-      return next;
-    });
-    // trackId is the track's file path (true everywhere in Disc), which is
-    // all deleteSectionDrag needs — best-effort, so a clip that was never
-    // actually dragged (never rendered to disk) simply has nothing to clean up.
-    deleteSectionDrag(trackId, sectionId);
-  }, []);
-
-  // --- Collections (virtual groupings, independent of any real folder) --
-  const handleCreateCollection = useCallback((name) => {
-    const id = `collection-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const resolvedName = name || "New Collection";
-    setCollections((prev) => [
-      ...prev,
-      { id, name: resolvedName, color: null, trackIds: [] },
-    ]);
-    logEvent("collection.create", { collectionId: id, name: resolvedName, color: null });
-    return id;
-  }, [logEvent]);
-
-  const handleRenameCollection = useCallback((id, name) => {
-    const resolvedName = name.trim() || "New Collection";
-    setCollections((prev) =>
-      prev.map((c) =>
-        c.id === id ? { ...c, name: resolvedName } : c
-      )
-    );
-    logEvent("collection.rename", { collectionId: id, name: resolvedName });
-  }, [logEvent]);
-
-  const handleDeleteCollection = useCallback((id) => {
-    setCollections((prev) => prev.filter((c) => c.id !== id));
-    logEvent("collection.delete", { collectionId: id });
-  }, [logEvent]);
-
-  const handleSetCollectionColor = useCallback((id, color) => {
-    setCollections((prev) => prev.map((c) => (c.id === id ? { ...c, color } : c)));
-    logEvent("collection.recolor", { collectionId: id, color });
-  }, [logEvent]);
-
-  const handleAddTracksToCollection = useCallback((trackIds, collectionId) => {
-    const collection = collectionsRef.current.find((c) => c.id === collectionId);
-    const already = new Set(collection?.trackIds || []);
-    const changedTrackIds = trackIds.filter((id) => !already.has(id));
-    setCollections((prev) =>
-      prev.map((c) => {
-        if (c.id !== collectionId) return c;
-        const existing = new Set(c.trackIds);
-        trackIds.forEach((id) => existing.add(id));
-        return { ...c, trackIds: Array.from(existing) };
-      })
-    );
-    changedTrackIds.forEach((trackId) => {
-      const trackKey = trackKeyFor(trackId);
-      if (trackKey) logEvent("collection.addTrack", { collectionId, trackKey });
-    });
-  }, [logEvent, trackKeyFor]);
-
-  const handleRemoveTrackFromCollection = useCallback((trackId, collectionId) => {
-    setCollections((prev) =>
-      prev.map((c) =>
-        c.id === collectionId
-          ? { ...c, trackIds: c.trackIds.filter((id) => id !== trackId) }
-          : c
-      )
-    );
-    const trackKey = trackKeyFor(trackId);
-    if (trackKey) logEvent("collection.removeTrack", { collectionId, trackKey });
-  }, [logEvent, trackKeyFor]);
-
-  // Rebinding a key to one action automatically clears it from whatever
-  // action was using it, so two actions can never silently share a key.
-  const handleSetShortcut = useCallback((action, key) => {
-    setShortcuts((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((otherAction) => {
-        if (otherAction !== action && next[otherAction] === key) {
-          next[otherAction] = "";
-        }
-      });
-      next[action] = key;
-      return next;
-    });
-  }, []);
-
-  const handleResetShortcuts = useCallback(() => {
-    setShortcuts({ ...DEFAULT_SHORTCUTS });
-  }, []);
-
-  const handleCreateTag = useCallback((name, color) => {
-    const trimmed = name.trim();
-    if (!trimmed) return null;
-    const id = `tag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setTags((prev) => [...prev, { id, name: trimmed, color }]);
-    logEvent("tag.create", { tagId: id, name: trimmed, color });
-    return id;
-  }, [logEvent]);
-
-  // Soft delete — same pattern as handleDeleteFolderGroup above: removed
-  // immediately, but kept around for a few seconds so an accidental
-  // "Delete tag completely" can be undone before it's actually gone.
-  const handleDeleteTag = useCallback(
-    (tagId) => {
-      const tag = tags.find((t) => t.id === tagId);
-      if (!tag) return;
-      const trackIds = Object.keys(trackTags).filter((id) =>
-        (trackTags[id] || []).includes(tagId)
-      );
-
-      setTags((prev) => prev.filter((t) => t.id !== tagId));
-      setTrackTags((prev) => {
-        const next = {};
-        for (const [trackId, ids] of Object.entries(prev)) {
-          next[trackId] = ids.filter((id) => id !== tagId);
-        }
-        return next;
-      });
-      setPendingDeletedTag({ tag, trackIds });
-      clearTimeout(undoTagTimeoutRef.current);
-      // Only actually logged once the undo window expires, not here on the
-      // click — an event synced to another machine can't be un-sent, so
-      // logging immediately would mean an Undo on this machine couldn't
-      // un-delete it on Peter's.
-      undoTagTimeoutRef.current = setTimeout(() => {
-        logEvent("tag.delete", { tagId });
-        setPendingDeletedTag(null);
-      }, 8000);
-    },
-    [tags, trackTags, logEvent]
-  );
-
-  const handleUndoDeleteTag = useCallback(() => {
-    if (!pendingDeletedTag) return;
-    clearTimeout(undoTagTimeoutRef.current);
-    const { tag, trackIds } = pendingDeletedTag;
-    setTags((prev) => [...prev, tag]);
-    setTrackTags((prev) => {
-      const next = { ...prev };
-      trackIds.forEach((trackId) => {
-        const current = next[trackId] || [];
-        if (!current.includes(tag.id)) next[trackId] = [...current, tag.id];
-      });
-      return next;
-    });
-    setPendingDeletedTag(null);
-  }, [pendingDeletedTag]);
-
-  const handleRenameTag = useCallback((tagId, name) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, name: trimmed } : t)));
-    logEvent("tag.rename", { tagId, name: trimmed });
-  }, [logEvent]);
-
-  const handleRecolorTag = useCallback((tagId, color) => {
-    setTags((prev) => prev.map((t) => (t.id === tagId ? { ...t, color } : t)));
-    logEvent("tag.recolor", { tagId, color });
-  }, [logEvent]);
-
-  // Reassigns every track carrying `fromId` over to `intoId` (tracks that
-  // already had both just end up with one), then removes `fromId`
-  // entirely — the standard "these turned out to be the same tag" cleanup.
-  const handleMergeTags = useCallback((fromId, intoId) => {
-    if (fromId === intoId) return;
-    setTrackTags((prev) => {
-      const next = {};
-      for (const [trackId, ids] of Object.entries(prev)) {
-        if (ids.includes(fromId)) {
-          next[trackId] = ids.includes(intoId)
-            ? ids.filter((id) => id !== fromId)
-            : ids.map((id) => (id === fromId ? intoId : id));
-        } else {
-          next[trackId] = ids;
-        }
-      }
-      return next;
-    });
-    setTags((prev) => prev.filter((t) => t.id !== fromId));
-    logEvent("tag.merge", { fromTagId: fromId, intoTagId: intoId });
-  }, [logEvent]);
-
-  // Mutually exclusive with the health-dashboard filters (both drive the
-  // same "show only these tracks, spanning the whole library" library-view
-  // state) — setting one clears the other rather than trying to combine
-  // two different filtered views at once.
-  const handleSetTagFilter = useCallback((tagId) => {
-    setTagFilterId(tagId);
-    if (tagId) setHealthFilter(null);
-  }, []);
-
-  const handleSetHealthFilter = useCallback((filter) => {
-    setHealthFilter(filter);
-    if (filter) setTagFilterId(null);
-  }, []);
-
-  const handleToggleTrackTag = useCallback((trackId, tagId) => {
-    const willAssign = !(trackTagsRef.current[trackId] || []).includes(tagId);
-    setTrackTags((prev) => {
-      const current = prev[trackId] || [];
-      const next = current.includes(tagId)
-        ? current.filter((id) => id !== tagId)
-        : [...current, tagId];
-      return { ...prev, [trackId]: next };
-    });
-    const trackKey = trackKeyFor(trackId);
-    if (trackKey) logEvent(willAssign ? "tag.assign" : "tag.unassign", { trackKey, tagId });
-  }, [logEvent, trackKeyFor]);
-
-  // Explicit add (not toggle) across many tracks at once — used by the
-  // multi-select batch "Add Tag" action.
-  const handleAssignTagToTracks = useCallback((trackIds, tagId) => {
-    const changedTrackIds = trackIds.filter(
-      (trackId) => !(trackTagsRef.current[trackId] || []).includes(tagId)
-    );
-    setTrackTags((prev) => {
-      const next = { ...prev };
-      trackIds.forEach((trackId) => {
-        const current = next[trackId] || [];
-        if (!current.includes(tagId)) next[trackId] = [...current, tagId];
-      });
-      return next;
-    });
-    changedTrackIds.forEach((trackId) => {
-      const trackKey = trackKeyFor(trackId);
-      if (trackKey) logEvent("tag.assign", { trackKey, tagId });
-    });
-  }, [logEvent, trackKeyFor]);
-
-  // Files dragged in from the OS land here, get copied into the target
-  // folder (the active custom folder's directory if one's linked and
-  // selected, otherwise the main music folder), and the relevant watcher
-  // (or this fallback rescan) picks them up.
   const handleDropFiles = useCallback(
-    async (sourcePaths, targetFolderPath) => {
-      const folder = targetFolderPath || musicFolderPathRef.current;
+    async (sourcePaths, folderId) => {
+      const folder = foldersRef.current.find((f) => f.id === folderId);
       if (!folder || !window.disc || sourcePaths.length === 0) return;
-      await window.disc.copyFilesIntoFolder(folder, sourcePaths);
-      rescan();
+      await window.disc.copyFilesIntoFolder(folder.folderPath, sourcePaths);
+      scanOne(folder);
     },
-    [rescan]
+    [scanOne]
   );
 
-  // Physically moves a batch of tracks to a different folder on disk (the
-  // multi-select "Move to folder" action), then rescans everything that
-  // could plausibly have changed — simplest correct approach, since a
-  // move touches both the source and destination roots.
-  const handleBatchMove = useCallback(
-    async (trackIds, destFolderPath) => {
-      if (!window.disc || !destFolderPath || trackIds.length === 0) return;
-      const idSet = new Set(trackIds);
-      const toMove = allTracksRef.current.filter((t) => idSet.has(t.id));
-      for (const track of toMove) {
-        await window.disc.moveFile(track.filePath, destFolderPath);
-      }
-      rescan();
-      customFolders.forEach((folder) => {
-        if (!folder.folderPath) return;
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(folder.id, found, (result) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: result }))
-          );
-        });
-      });
-    },
-    [rescan, customFolders, applyScanResult]
-  );
-
-  // Deletes a track (to the OS trash, recoverable) then rescans everything
-  // that could plausibly have changed. The folder watcher would also catch
-  // this on its own, but doing it explicitly makes the UI update instantly
-  // rather than waiting on the watcher's debounce.
   const handleDeleteTrack = useCallback(
     async (filePath) => {
       if (!window.disc || !filePath) return;
       await window.disc.deleteFile(filePath);
-      rescan();
-      customFolders.forEach((folder) => {
-        if (!folder.folderPath) return;
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(folder.id, found, (result) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: result }))
-          );
-        });
-      });
+      scanAll();
     },
-    [rescan, customFolders, applyScanResult]
+    [scanAll]
   );
 
-  // Same as handleDeleteTrack, but for a whole multi-selection at once —
-  // takes track ids (matching every other batch action, e.g. handleBatchMove
-  // above) rather than file paths, and does one rescan at the end instead
-  // of one per file.
-  const handleDeleteTracks = useCallback(
-    async (trackIds) => {
-      if (!window.disc || !trackIds || trackIds.length === 0) return;
-      const idSet = new Set(trackIds);
-      const toDelete = allTracksRef.current.filter((t) => idSet.has(t.id));
-      for (const track of toDelete) {
-        await window.disc.deleteFile(track.filePath);
-      }
-      rescan();
-      customFolders.forEach((folder) => {
-        if (!folder.folderPath) return;
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(folder.id, found, (result) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: result }))
-          );
-        });
-      });
-    },
-    [rescan, customFolders, applyScanResult]
-  );
-
-  // Renaming a track renames the actual file on disk — and since a
-  // track's id *is* its file path everywhere in Disc, that means the id
-  // changes too. Everything keyed by the old id (favorites, tags, notes,
-  // Collection membership) has to be carried
-  // over to the new id here, or it would just silently vanish the moment
-  // the library rescans and the track reappears under its new path.
+  // A track's id *is* its file path, so renaming the file changes its id —
+  // carry its favorite status across or it would silently disappear.
   const handleRenameTrackFile = useCallback(
     async (track, newStem) => {
       if (!window.disc || !track || !newStem?.trim()) return { success: false };
       const result = await window.disc.renameTrackFile(track.filePath, newStem.trim());
       if (!result?.success) return result;
-
-      const oldId = track.id;
-      const newId = result.newPath;
-
-      if (oldId !== newId) {
-        setFavoriteIds((prev) => prev.map((id) => (id === oldId ? newId : id)));
-
-        setTrackTags((prev) => {
-          if (!(oldId in prev)) return prev;
-          const next = { ...prev };
-          next[newId] = next[oldId];
-          delete next[oldId];
-          return next;
-        });
-
-        setTrackNotes((prev) => {
-          if (!(oldId in prev)) return prev;
-          const next = { ...prev };
-          next[newId] = next[oldId];
-          delete next[oldId];
-          return next;
-        });
-
-        setCollections((prev) =>
-          prev.map((c) =>
-            c.trackIds.includes(oldId)
-              ? { ...c, trackIds: c.trackIds.map((id) => (id === oldId ? newId : id)) }
-              : c
-          )
-        );
+      if (track.id !== result.newPath) {
+        setFavoriteIds((prev) => prev.map((id) => (id === track.id ? result.newPath : id)));
       }
-
-      // The file-watcher will pick this up on its own, but rescanning
-      // right away means the renamed track (and its migrated tags/notes/
-      // etc, now correctly attached to it) shows up immediately instead
-      // of waiting on the watcher's own timing.
-      rescan();
-      customFolders.forEach((folder) => {
-        if (!folder.folderPath) return;
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(folder.id, found, (r) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: r }))
-          );
-        });
-      });
-
+      scanAll();
       return result;
     },
-    [rescan, customFolders, applyScanResult]
+    [scanAll]
   );
 
-  // Right-click a track → Repair Track: for a file whose actual content
-  // doesn't match its .mp3 extension (a downloader/converter upstream can
-  // save AAC/M4A content with a .mp3 extension — this bit a real track
-  // once, playing fine inside Disc via Web Audio's permissive decoding,
-  // but silently failing to register when dragged into DaVinci Resolve,
-  // which inspects the real container). Diagnoses first — a genuinely
-  // healthy file just gets a "nothing to repair" toast, no confirmation
-  // needed.
-  const REPAIR_FORMAT_LABELS = {
-    mp4: "an M4A/AAC file",
-    ogg: "an Ogg file",
-    flac: "a FLAC file",
-    wav: "a WAV file",
-    unknown: "something Disc doesn't recognize",
-  };
+  // --- Playback --------------------------------------------------------
+  const audioRef = useRef(null);
+  if (!audioRef.current && typeof Audio !== "undefined") {
+    audioRef.current = new Audio();
+  }
+  const currentTrackRef = useRef(null);
+  // Guards against a slow-to-resolve loadAndPlay finishing after a newer
+  // one has taken over (clicking through tracks quickly).
+  const loadRequestIdRef = useRef(0);
+  const [currentTrackId, setCurrentTrackId] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(() => {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    return raw !== null ? Number(raw) : 0.8;
+  });
+  const [queueTrackIds, setQueueTrackIds] = useState([]);
+  const [queueIndex, setQueueIndex] = useState(-1);
+  const [shuffleEnabled, setShuffleEnabled] = useState(
+    () => localStorage.getItem(SHUFFLE_KEY) === "true"
+  );
+  const queueRef = useRef({ ids: [], index: -1 });
+  const playNextRef = useRef(() => {});
 
-  const handleRepairTrack = useCallback(async (trackId) => {
-    const diagnosis = await window.disc?.diagnoseTrack(trackId);
-    if (!diagnosis || diagnosis.error) {
-      showToast("Couldn't check this file — it may be unreachable.");
-      return;
-    }
-    if (diagnosis.healthy) {
-      showToast("Already a valid MP3 — nothing to repair.");
-      return;
-    }
-    setRepairConfirm({ trackId, diagnosis });
-  }, [showToast]);
+  useEffect(() => {
+    localStorage.setItem(SHUFFLE_KEY, String(shuffleEnabled));
+  }, [shuffleEnabled]);
 
-  const handleConfirmRepair = useCallback(async () => {
-    if (!repairConfirm) return;
-    const { trackId } = repairConfirm;
-    setRepairConfirm(null);
-    setRepairProgress({ trackId, fraction: 0 });
-    try {
-      const { mp3Bytes } = await convertToMp3(trackId, {
-        onBlockProgress: (fraction) => setRepairProgress({ trackId, fraction }),
-      });
-      const result = await window.disc.repairTrackFile(trackId, mp3Bytes);
-      if (!result?.success) {
-        showToast(`Repair failed: ${result?.error || "unknown error"}`);
-        return;
-      }
-      // Same reasoning as handleRenameTrackFile above — this cache is
-      // keyed by track id (path), which didn't change, so nothing would
-      // otherwise know this track's actual bytes on disk are new.
-      invalidateWaveform(trackId);
-      rescan();
-      customFolders.forEach((folder) => {
-        if (!folder.folderPath) return;
-        window.disc.scanFolder(folder.folderPath).then((found) => {
-          applyScanResult(folder.id, found, (r) =>
-            setCustomFolderTracks((prev) => ({ ...prev, [folder.id]: r }))
-          );
-        });
-      });
-      showToast("Repaired — the original is backed up alongside it.");
-    } catch (err) {
-      showToast(`Repair failed: ${err.message}`);
-    } finally {
-      setRepairProgress(null);
-    }
-  }, [repairConfirm, rescan, customFolders, applyScanResult, showToast]);
+  useEffect(() => {
+    const audio = audioRef.current;
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => {
+      setIsPlaying(false);
+      playNextRef.current();
+    };
+    const onMeta = () => setDuration(audio.duration || 0);
+    const onError = () => console.error("Disc Lite: audio playback error", audio.error);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("error", onError);
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("error", onError);
+    };
+  }, []);
 
-  // Loads a track's audio into the shared <audio> element (if it isn't
-  // already loaded) and starts playback, optionally seeking first.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+    const timer = setTimeout(() => localStorage.setItem(VOLUME_KEY, String(volume)), 200);
+    return () => clearTimeout(timer);
+  }, [volume]);
+
   const loadAndPlay = useCallback(async (track, seekFraction = 0) => {
     if (!window.disc) return;
     const audio = audioRef.current;
@@ -1351,30 +272,15 @@ export default function App() {
 
     if (isNewTrack) {
       const requestId = ++loadRequestIdRef.current;
-      // Points straight at the file via the disc-media:// protocol (see
-      // electron/main.js) instead of reading the whole file over IPC and
-      // building a Blob — Chromium streams it directly off disk, the same
-      // way it would a real <audio src="https://...">, so playback can
-      // start as soon as enough of the file has arrived rather than
-      // waiting on the entire thing to be read and copied into the
-      // renderer first. Setting src is synchronous, but decoding enough
-      // to know the track's metadata still isn't, so the same stale-call
-      // guard as before still matters below.
+      // Streams straight off disk via the disc-media:// protocol (see
+      // electron/main.js) rather than reading the whole file over IPC.
       audio.src = toMediaUrl(track.filePath);
       currentTrackRef.current = track;
       setCurrentTrackId(track.id);
 
-      // Waiting on loadedmetadata alone isn't enough now that this is a
-      // streamed source rather than a fully-buffered Blob: MP3s without an
-      // explicit duration header (Xing/VBRI) often report `duration` as
-      // Infinity at loadedmetadata and only get a real, finite value
-      // slightly later via durationchange, once Chromium's worked it out
-      // from the file's actual size. The seek logic below needs a real
-      // duration to turn a fraction into a target time — without this,
-      // Number.isFinite(audio.duration) was false and the seek silently
-      // got skipped, so a mid-track click always played from 0. canplay is
-      // a bounded fallback so a genuinely unresolvable duration (a
-      // malformed file) still starts playing rather than hanging forever.
+      // MP3s without a duration header report Infinity at loadedmetadata
+      // and only settle on a real value at durationchange; seeking needs a
+      // real duration. canplay is a bounded fallback for unresolvable ones.
       await new Promise((resolve) => {
         function checkReady() {
           if (Number.isFinite(audio.duration)) done();
@@ -1392,19 +298,11 @@ export default function App() {
         audio.addEventListener("canplay", done, { once: true });
       });
 
-      // A newer call to loadAndPlay can complete first — either because it
-      // was made later but resolved sooner, or while this one was still
-      // waiting on loadedmetadata. Either way this call is stale: resuming
-      // would seek/play using its own now-outdated track and seekFraction.
       if (loadRequestIdRef.current !== requestId) return;
     }
 
-    // Setting `currentTime` — even to a value the element is already at —
-    // forces a real seek, and MP3 decoding has to re-sync to a frame
-    // boundary to honor that. A freshly-loaded track already starts at 0,
-    // so re-issuing "seek to 0" right as playback begins was causing a
-    // brief decode restart (audible as the first instant repeating).
-    // Only actually seek when it's a real, meaningful position change.
+    // Only seek on a real position change — re-seeking to 0 on a fresh
+    // track forces an MP3 decode restart, audible as a repeated first beat.
     if (seekFraction != null && Number.isFinite(audio.duration)) {
       const targetTime = seekFraction * audio.duration;
       const startsAtZeroAlready = isNewTrack && seekFraction === 0;
@@ -1416,7 +314,7 @@ export default function App() {
     try {
       await audio.play();
     } catch {
-      // Playback can be interrupted by a rapid follow-up call; safe to ignore.
+      // Interrupted by a rapid follow-up call; safe to ignore.
     }
   }, []);
 
@@ -1425,21 +323,14 @@ export default function App() {
       const audio = audioRef.current;
       const isSameTrack = currentTrackRef.current?.id === track.id;
       if (isSameTrack && forceFromStart) {
-        // Shift+Click: restart from the very beginning regardless of
-        // wherever playback currently sits, or whether it's paused.
         audio.currentTime = 0;
         audio.play().catch(() => {});
         return;
       }
       if (isSameTrack) {
-        if (audio.paused) {
-          audio.play().catch(() => {});
-        } else {
-          audio.pause();
-        }
+        if (audio.paused) audio.play().catch(() => {});
+        else audio.pause();
       } else {
-        // A freshly-loaded track always starts at 0 anyway, so
-        // forceFromStart doesn't need any special handling on this path.
         loadAndPlay(track, 0);
       }
     },
@@ -1450,9 +341,7 @@ export default function App() {
     (track, fraction) => {
       const audio = audioRef.current;
       if (currentTrackRef.current?.id === track.id) {
-        if (Number.isFinite(audio.duration)) {
-          audio.currentTime = fraction * audio.duration;
-        }
+        if (Number.isFinite(audio.duration)) audio.currentTime = fraction * audio.duration;
         if (audio.paused) audio.play().catch(() => {});
       } else {
         loadAndPlay(track, fraction);
@@ -1461,74 +350,26 @@ export default function App() {
     [loadAndPlay]
   );
 
-  // Ctrl+Click on Play: cycles through a track's marked sections in the
-  // order they were created, playing from that section's start each
-  // time. Tracks which section came up last per-track so consecutive
-  // Ctrl+clicks advance rather than always landing on the first one;
-  // switching to a different track (by any means) resets the cycle back
-  // to the first section next time.
-  const sectionCycleRef = useRef({ trackId: null, index: -1 });
-
-  const playTrackSection = useCallback(
-    (track, sections) => {
-      if (!sections || sections.length === 0) {
-        togglePlayPause(track);
-        return;
-      }
-      const cycle = sectionCycleRef.current;
-      const isSameCycleTrack = cycle.trackId === track.id;
-      const nextIndex = isSameCycleTrack ? (cycle.index + 1) % sections.length : 0;
-      sectionCycleRef.current = { trackId: track.id, index: nextIndex };
-
-      const section = sections[nextIndex];
-      const audio = audioRef.current;
-      if (currentTrackRef.current?.id === track.id) {
-        if (Number.isFinite(audio.duration)) {
-          audio.currentTime = section.startFraction * audio.duration;
-        }
-        audio.play().catch(() => {});
-      } else {
-        loadAndPlay(track, section.startFraction);
-      }
-    },
-    [loadAndPlay, togglePlayPause]
-  );
-
   const getCurrentTime = useCallback(() => audioRef.current?.currentTime || 0, []);
 
-  // Nudges playback by a number of seconds (used by the ←/→ shortcuts).
   const seekRelative = useCallback((deltaSeconds) => {
     const audio = audioRef.current;
     if (!currentTrackRef.current || !Number.isFinite(audio.duration)) return;
-    audio.currentTime = Math.min(
-      audio.duration,
-      Math.max(0, audio.currentTime + deltaSeconds)
-    );
+    audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + deltaSeconds));
   }, []);
 
-  function shuffleArray(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
-
-  // Starts a queue from a list of track ids (e.g. everything currently
-  // visible in the Library panel) and plays the first one.
+  // Starts a queue from a list of track ids (whatever the library is
+  // currently showing) and plays the first one.
   const handlePlayAll = useCallback(
     (trackIds, shuffle) => {
       if (!trackIds || trackIds.length === 0) return;
-      let ordered = shuffle ? shuffleArray(trackIds) : trackIds;
-
-      // If shuffling while something's already playing, don't let the new
-      // queue's first pick be the same track — that reads as "it repeated".
+      const ordered = shuffle ? shuffleArray(trackIds) : [...trackIds];
+      // Don't let a fresh shuffle open on the track already playing — that
+      // reads as "it repeated".
       const nowPlayingId = currentTrackRef.current?.id;
       if (shuffle && ordered.length > 1 && ordered[0] === nowPlayingId) {
         [ordered[0], ordered[1]] = [ordered[1], ordered[0]];
       }
-
       queueRef.current = { ids: ordered, index: 0 };
       setQueueTrackIds(ordered);
       setQueueIndex(0);
@@ -1543,17 +384,11 @@ export default function App() {
     if (!ids || ids.length === 0) return;
     const nextIndex = index + 1;
     if (nextIndex >= ids.length) {
-      // With Shuffle on, reaching the end of the queue doesn't stop
-      // playback — it reshuffles the same set of tracks into a fresh
-      // order and keeps going, so a shuffled playlist can run
-      // indefinitely instead of playing through once and falling silent.
-      // Same anti-repeat swap as starting a fresh shuffle: the track that
-      // just finished shouldn't immediately come up again as the very
-      // next one.
+      // With Shuffle on, the end of the queue reshuffles and keeps going so
+      // a shuffled playlist can run indefinitely.
       if (shuffleEnabled) {
         const reshuffled = shuffleArray(ids);
-        const justPlayedId = ids[index];
-        if (reshuffled.length > 1 && reshuffled[0] === justPlayedId) {
+        if (reshuffled.length > 1 && reshuffled[0] === ids[index]) {
           [reshuffled[0], reshuffled[1]] = [reshuffled[1], reshuffled[0]];
         }
         queueRef.current = { ids: reshuffled, index: 0 };
@@ -1573,6 +408,7 @@ export default function App() {
     setQueueIndex(nextIndex);
     if (nextTrack) loadAndPlay(nextTrack, 0);
   }, [loadAndPlay, shuffleEnabled]);
+  playNextRef.current = handlePlayNext;
 
   const handlePlayPrev = useCallback(() => {
     const { ids, index } = queueRef.current;
@@ -1584,650 +420,85 @@ export default function App() {
     if (prevTrack) loadAndPlay(prevTrack, 0);
   }, [loadAndPlay]);
 
-  const handleToggleShuffle = useCallback(() => {
-    setShuffleEnabled((v) => !v);
-  }, []);
+  const handleToggleShuffle = useCallback(() => setShuffleEnabled((v) => !v), []);
 
-  // Global keyboard shortcuts — ignored entirely while typing in a text
-  // field, dropdown, or slider so they don't fight with normal typing or
-  // native input behavior (e.g. arrow keys on a range slider).
-  // Bindings come from `shortcuts` (user-customizable in the Shortcuts
-  // modal) except Ctrl/Cmd+K, which is a fixed convention like most apps.
+  // Keyboard: Space play/pause, ←/→ seek 5s, ↑/↓ volume, S shuffle,
+  // Ctrl+F or / jumps to search. Ignored while typing in a field.
   useEffect(() => {
-    function isTypingTarget() {
+    function isTyping() {
       const el = document.activeElement;
       if (!el) return false;
-      const tag = el.tagName;
-      return (
-        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable
-      );
+      return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
     }
-
-    function matchesKey(e, boundKey) {
-      if (!boundKey) return false;
-      if (boundKey.length === 1) return e.key.toLowerCase() === boundKey.toLowerCase();
-      return e.key === boundKey;
-    }
-
-    function handleKeyDown(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCommandPaletteOpen((v) => !v);
-        return;
-      }
-
-      // Force Save — everything in Disc already persists to localStorage
-      // the moment it changes, with one exception (volume, debounced by
-      // 200ms so a slider drag doesn't hammer localStorage on every
-      // tick). This flushes that immediately and confirms with a toast,
-      // mostly for peace of mind that nothing's sitting unsaved.
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        localStorage.setItem(VOLUME_STORAGE_KEY, String(volume));
-        setShowSavedToast(true);
-        clearTimeout(savedToastTimeoutRef.current);
-        savedToastTimeoutRef.current = setTimeout(() => setShowSavedToast(false), 2000);
-        return;
-      }
-
-      if (isTypingTarget()) return;
-
-      const s = shortcutsRef.current;
-
-      if (matchesKey(e, s.playPause)) {
-        e.preventDefault();
-        if (currentTrackRef.current) togglePlayPause(currentTrackRef.current);
-      } else if (matchesKey(e, s.seekBack)) {
-        e.preventDefault();
-        seekRelative(-5);
-      } else if (matchesKey(e, s.seekForward)) {
-        e.preventDefault();
-        seekRelative(5);
-      } else if (matchesKey(e, s.volumeUp)) {
-        e.preventDefault();
-        setVolume((v) => Math.min(1, Math.round((v + 0.05) * 100) / 100));
-      } else if (matchesKey(e, s.volumeDown)) {
-        e.preventDefault();
-        setVolume((v) => Math.max(0, Math.round((v - 0.05) * 100) / 100));
-      } else if (matchesKey(e, s.focusSearch)) {
+    function onKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         document.querySelector(".library-toolbar__search input")?.focus();
-      } else if (matchesKey(e, s.next)) {
-        handlePlayNext();
-      } else if (matchesKey(e, s.prev)) {
-        handlePlayPrev();
-      } else if (matchesKey(e, s.shuffle)) {
-        handleToggleShuffle();
-      } else if (matchesKey(e, s.showShortcuts)) {
+        return;
+      }
+      if (isTyping()) return;
+      if (e.key === " ") {
         e.preventDefault();
-        setShortcutsModalOpen(true);
+        if (currentTrackRef.current) togglePlayPause(currentTrackRef.current);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        seekRelative(-5);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        seekRelative(5);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setVolume((v) => Math.min(1, Math.round((v + 0.05) * 100) / 100));
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setVolume((v) => Math.max(0, Math.round((v - 0.05) * 100) / 100));
+      } else if (e.key.toLowerCase() === "s") {
+        handleToggleShuffle();
+      } else if (e.key === "/") {
+        e.preventDefault();
+        document.querySelector(".library-toolbar__search input")?.focus();
       }
     }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [togglePlayPause, seekRelative, handlePlayNext, handlePlayPrev, handleToggleShuffle, volume]);
-
-  const handleSelectTrack = useCallback((track) => {
-    setSelectedTrackId(track.id);
-  }, []);
-
-  const handleCreateFolder = useCallback((type = "folder", groupId = "primary") => {
-    const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    if (type === "divider") {
-      setCustomFolders((prev) => [
-        ...prev,
-        { id, type: "divider", name: "New Section", groupId, collapsed: false, sectionId: null },
-      ]);
-      logEvent("folder.create", { folderId: id, kind: "section", name: "New Section", groupId, sectionId: null });
-    } else {
-      setCustomFolders((prev) => [
-        ...prev,
-        {
-          id,
-          type: "folder",
-          name: "New Folder",
-          color: null,
-          folderPath: null,
-          groupId,
-          sectionId: null,
-        },
-      ]);
-      logEvent("folder.create", { folderId: id, kind: "folder", name: "New Folder", color: null, groupId, sectionId: null });
-    }
-    return id;
-  }, [logEvent]);
-
-  // Dragging a real folder in from Explorer creates AND links it in one
-  // step — skips the usual "create empty folder, then browse for a
-  // directory" two-step entirely. Confirms the dropped path is genuinely
-  // a directory first (a stray file dropped alongside a folder gets
-  // silently skipped rather than creating a broken/unlinkable entry), and
-  // derives the folder's name from the directory's own name.
-  const handleCreateFolderFromPath = useCallback(async (folderPath, groupId, sectionId) => {
-    if (!window.disc || !folderPath) return;
-    const stat = await window.disc.statPath(folderPath);
-    if (!stat?.isDirectory) return;
-
-    const name =
-      folderPath.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "New Folder";
-    const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setCustomFolders((prev) => [
-      ...prev,
-      {
-        id,
-        type: "folder",
-        name,
-        color: null,
-        folderPath,
-        groupId,
-        sectionId: sectionId ?? null,
-      },
-    ]);
-    logEvent("folder.create", {
-      folderId: id,
-      kind: "folder",
-      name,
-      color: null,
-      groupId,
-      sectionId: sectionId ?? null,
-    });
-    const relativePath = folderRelativePathFor(folderPath);
-    if (relativePath !== null) logEvent("folder.link", { folderId: id, relativePath });
-  }, [logEvent, folderRelativePathFor]);
-
-  const handleRenameFolder = useCallback((id, name) => {
-    const trimmed = name.trim() || "New Folder";
-    setCustomFolders((prev) =>
-      prev.map((f) =>
-        f.id === id ? { ...f, name: trimmed } : f
-      )
-    );
-    logEvent("folder.rename", { folderId: id, name: trimmed });
-  }, [logEvent]);
-
-  // Deleting a Section un-nests whatever's inside it (back to top-level in
-  // the same group) rather than deleting those folders too — a Section is
-  // just an organizational grouping, and the folders inside it are real
-  // things the person still cares about even if the grouping goes away.
-  const handleDeleteFolder = useCallback((id) => {
-    setCustomFolders((prev) =>
-      prev
-        .filter((f) => f.id !== id)
-        .map((f) => (f.sectionId === id ? { ...f, sectionId: null } : f))
-    );
-    logEvent("folder.delete", { folderId: id });
-  }, [logEvent]);
-
-  const handleToggleSectionCollapsed = useCallback((id) => {
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, collapsed: !f.collapsed } : f))
-    );
-  }, []);
-
-  // Links a custom folder to a real directory on disk — from then on it's
-  // scanned and watched independently, and excluded from the main music
-  // folder's scan (if one's set — there's no dedicated browsing view for
-  // it anymore, but it can still exist as an underlying data source).
-  // If the chosen folder has convertible audio files in it (.ogg, .flac,
-  // .m4a, .aac, .opus, .webm — same list the standalone converter uses),
-  // linking is held off and a prompt takes over instead (see
-  // pendingOggLink below and OggLinkPromptModal.jsx). Worth being
-  // accurate about *why* this exists: Chromium's Web Audio already
-  // decodes several of these formats natively (.ogg included), so this
-  // isn't about Disc being unable to play them — it's simply offering
-  // the choice to convert to real .mp3 files on disk, for whatever
-  // reason that matters to the person doing the linking (sharing with
-  // others, a workflow that expects mp3 specifically, etc). A folder
-  // with nothing convertible in it links exactly as it always has, no
-  // extra step in the common case.
-  const handleLinkFolderDirectory = useCallback(async (id) => {
-    if (!window.disc) return;
-    const chosen = await window.disc.chooseMusicFolder();
-    if (!chosen) return;
-
-    const convertiblePaths = await window.disc.scanForConvertible(chosen);
-    if (convertiblePaths.length > 0) {
-      setPendingOggLink({ folderId: id, folderPath: chosen, convertiblePaths });
-      return;
-    }
-
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, folderPath: chosen } : f))
-    );
-    const relativePath = folderRelativePathFor(chosen);
-    if (relativePath !== null) logEvent("folder.link", { folderId: id, relativePath });
-  }, [logEvent, folderRelativePathFor]);
-
-  // The three things the OGG-link prompt can end in:
-  const handleLinkWithoutConverting = useCallback(() => {
-    if (!pendingOggLink) return;
-    const { folderId, folderPath } = pendingOggLink;
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === folderId ? { ...f, folderPath } : f))
-    );
-    setPendingOggLink(null);
-    const relativePath = folderRelativePathFor(folderPath);
-    if (relativePath !== null) logEvent("folder.link", { folderId, relativePath });
-  }, [pendingOggLink, logEvent, folderRelativePathFor]);
-
-  const handleCancelOggLinkPrompt = useCallback(() => {
-    setPendingOggLink(null);
-  }, []);
-
-  // Links the folder so the modal can show live progress as files land in
-  // it — the modal itself (OggLinkPromptModal) drives the actual convert
-  // loop and calls this once, right as it starts.
-  const handleConvertAndLink = useCallback(() => {
-    if (!pendingOggLink) return;
-    const { folderId, folderPath } = pendingOggLink;
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === folderId ? { ...f, folderPath } : f))
-    );
-    const relativePath = folderRelativePathFor(folderPath);
-    if (relativePath !== null) logEvent("folder.link", { folderId, relativePath });
-  }, [pendingOggLink, logEvent, folderRelativePathFor]);
-
-  // Cancelling mid-conversion un-links the folder entirely — not just a
-  // pause. Converting was an explicit, potentially slow choice (dozens or
-  // hundreds of files), so backing out should leave things exactly as if
-  // it had never been started, not a half-linked folder with only some
-  // files converted.
-  const handleUnlinkPendingOggFolder = useCallback(() => {
-    if (!pendingOggLink) return;
-    const { folderId } = pendingOggLink;
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === folderId ? { ...f, folderPath: null } : f))
-    );
-    setPendingOggLink(null);
-    logEvent("folder.unlink", { folderId });
-  }, [pendingOggLink, logEvent]);
-
-  const handleUnlinkFolderDirectory = useCallback((id) => {
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, folderPath: null } : f))
-    );
-    logEvent("folder.unlink", { folderId: id });
-  }, [logEvent]);
-
-  const handleSetFolderColor = useCallback((id, color) => {
-    setCustomFolders((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, color } : f))
-    );
-    logEvent("folder.recolor", { folderId: id, color });
-  }, [logEvent]);
-
-  // Drag-to-reorder within a group, or drag between two different groups'
-  // panels entirely — dropping one item onto another places the dragged
-  // item right before the drop target (and, if it came from a different
-  // group, moves it into the destination group); dropping in the empty
-  // space below a list sends it to the end of that group. Only groupId
-  // changes when moving between groups — color, linked directory, tags on
-  // its tracks, everything else about the folder is untouched.
-  // Drag-to-reorder within a group, drag between two different groups'
-  // panels, and now also drag in/out of a Section within a group — drop
-  // directly on a Section (or on a folder that's already inside one) to
-  // join it; drop in the general list area (not on anything specific) to
-  // land at top-level, outside any Section. Only groupId/sectionId change
-  // when moving something — color, linked directory, everything else
-  // about a folder is untouched. Sections themselves never get nested
-  // inside another Section (one level of nesting only, kept simple).
-  // Drag-to-reorder within a group, drag between two different groups'
-  // panels, and drag in/out of a Section (which can now nest inside
-  // another Section too, arbitrarily deep) within a group — drop
-  // directly on a Section (or on an item that's already inside one) to
-  // join it; drop in the general list area (not on anything specific) to
-  // land at top-level, outside any Section. Only groupId/sectionId change
-  // when moving something — color, linked directory, everything else
-  // about a folder is untouched.
-  const handleReorderFolders = useCallback((draggedId, targetId, targetGroupId, targetSectionId) => {
-    if (draggedId === targetId) return;
-    setCustomFolders((prev) => {
-      const dragged = prev.find((f) => f.id === draggedId);
-      if (!dragged) return prev;
-
-      // A Section can't become nested inside itself or one of its own
-      // descendants — that would create a cycle with no way to drag it
-      // back out again, since the only path out would run back through
-      // itself. Walk the target's ancestor chain; if the dragged Section
-      // appears anywhere in it, reject the move entirely. The iteration
-      // cap is a defensive backstop, not something that should ever
-      // actually trigger — sectionId can't currently form a cycle given
-      // how it's set everywhere else, but an unbounded while loop here
-      // would freeze the whole renderer if that ever stopped being true
-      // (corrupted data, a future bug), which is worse than a crash.
-      if (dragged.type === "divider" && targetSectionId) {
-        let current = prev.find((f) => f.id === targetSectionId);
-        let guard = 0;
-        while (current && guard < 200) {
-          if (current.id === draggedId) return prev;
-          current = current.sectionId ? prev.find((f) => f.id === current.sectionId) : null;
-          guard += 1;
-        }
-      }
-
-      let working = prev;
-
-      // Moving a Section to a different group has to take its whole
-      // subtree with it — every folder and nested Section inside it, at
-      // any depth — otherwise its contents would be stranded in whatever
-      // panel it just left, invisible from the Section that now lives
-      // somewhere else.
-      if (dragged.type === "divider" && targetGroupId && dragged.groupId !== targetGroupId) {
-        const idsToMove = new Set([draggedId]);
-        let grew = true;
-        while (grew) {
-          grew = false;
-          for (const f of working) {
-            if (f.sectionId && idsToMove.has(f.sectionId) && !idsToMove.has(f.id)) {
-              idsToMove.add(f.id);
-              grew = true;
-            }
-          }
-        }
-        working = working.map((f) => (idsToMove.has(f.id) ? { ...f, groupId: targetGroupId } : f));
-      }
-
-      const fromIndex = working.findIndex((f) => f.id === draggedId);
-      if (fromIndex === -1) return prev;
-      const next = [...working];
-      const [moved] = next.splice(fromIndex, 1);
-      if (targetGroupId && moved.groupId !== targetGroupId) {
-        moved.groupId = targetGroupId;
-      }
-      if (targetSectionId !== undefined) {
-        moved.sectionId = targetSectionId;
-      }
-      if (targetId == null) {
-        next.push(moved);
-      } else {
-        const toIndex = next.findIndex((f) => f.id === targetId);
-        next.splice(toIndex === -1 ? next.length : toIndex, 0, moved);
-      }
-      return next;
-    });
-  }, []);
-
-  // Sorts a Section's direct children (folders and/or nested Sections)
-  // alphabetically by name. Only one level deep — a nested Section's own
-  // children aren't touched, so sorting stays predictable and each
-  // Section can be sorted independently.
-  const handleSortSectionAlphabetically = useCallback((sectionId) => {
-    setCustomFolders((prev) => {
-      const children = prev.filter((f) => f.sectionId === sectionId);
-      if (children.length < 2) return prev;
-      const sorted = [...children].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true })
-      );
-      const withoutChildren = prev.filter((f) => f.sectionId !== sectionId);
-      const sectionIndex = withoutChildren.findIndex((f) => f.id === sectionId);
-      const insertAt = sectionIndex === -1 ? withoutChildren.length : sectionIndex + 1;
-      const next = [...withoutChildren];
-      next.splice(insertAt, 0, ...sorted);
-      return next;
-    });
-  }, []);
-
-  // --- Folder groups — each one is its own independent, dockable panel --
-  // (see FolderGroupPanel.jsx). "primary" is the original always-present
-  // group (Favorites lives there) and
-  // can't be deleted; anything else is fully user-created.
-  // Manual "Scan" from a folder's right-click menu: re-reads its linked
-  // directory from scratch and reports what changed, for the case where
-  // the file watcher missed something (files copied in while Disc was
-  // closed, a network drive that doesn't emit change events, etc.).
-  // Returns { status: "ok" | "missing" | "unlinked", added, removed }.
-  const handleScanFolder = useCallback(
-    async (folderId) => {
-      const folder = customFolders.find((f) => f.id === folderId);
-      if (!folder?.folderPath || !window.disc) return { status: "unlinked", added: 0, removed: 0 };
-      const found = await window.disc.scanFolder(folder.folderPath);
-      if (found === null) {
-        applyScanResult(folderId, null, () => {});
-        return { status: "missing", added: 0, removed: 0 };
-      }
-      const before = new Set((customFolderTracksRef.current[folderId] || []).map((t) => t.filePath));
-      const after = new Set(found.map((t) => t.filePath));
-      let added = 0;
-      for (const path of after) if (!before.has(path)) added += 1;
-      let removed = 0;
-      for (const path of before) if (!after.has(path)) removed += 1;
-      applyScanResult(folderId, found, (result) =>
-        setCustomFolderTracks((prev) => ({ ...prev, [folderId]: result }))
-      );
-      return { status: "ok", added, removed };
-    },
-    [customFolders, applyScanResult]
-  );
-
-  const handleCreateFolderGroup = useCallback((name) => {
-    const id = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const group = { id, name: name?.trim() || "New Group", deletable: true };
-    setFolderGroups((prev) => [...prev, group]);
-    dockApiRef.current?.addPanel({
-      id: `folder-group-${id}`,
-      component: "folderGroup",
-      title: group.name,
-      params: { groupId: id },
-      position: { referencePanel: "library", direction: "left" },
-    });
-    logEvent("folderGroup.create", { groupId: id, name: group.name });
-    return id;
-  }, [logEvent]);
-
-  const handleRenameFolderGroup = useCallback((groupId, name) => {
-    const trimmed = name.trim() || "New Group";
-    setFolderGroups((prev) =>
-      prev.map((g) => (g.id === groupId ? { ...g, name: trimmed } : g))
-    );
-    // Best-effort — if this dockview version/panel doesn't support live
-    // title updates, the in-panel header (driven by the same state) is
-    // still always correct regardless.
-    dockApiRef.current?.getPanel(`folder-group-${groupId}`)?.api?.setTitle?.(trimmed);
-    logEvent("folderGroup.rename", { groupId, name: trimmed });
-  }, [logEvent]);
-
-  // Soft delete: the group and its folders are removed immediately (and
-  // the panel closes), but kept around for a few seconds so the action
-  // can be undone before it's final. The sync events (one folderGroup.delete
-  // plus one folder.delete per folder it takes with it — a receiving device
-  // needs its own tombstone per folder, since this isn't a Section's
-  // un-nesting where the cascade can be inferred from one event alone) are
-  // only actually logged once the undo window expires, same reasoning as
-  // handleDeleteTag: an event synced to another machine can't be un-sent.
-  const handleDeleteFolderGroup = useCallback(
-    (groupId) => {
-      const group = folderGroups.find((g) => g.id === groupId);
-      if (!group || !group.deletable) return;
-      const removedFolders = customFolders.filter((f) => f.groupId === groupId);
-
-      setFolderGroups((prev) => prev.filter((g) => g.id !== groupId));
-      setCustomFolders((prev) => prev.filter((f) => f.groupId !== groupId));
-      setPendingDeletedGroup({ group, folders: removedFolders });
-      clearTimeout(undoGroupTimeoutRef.current);
-      undoGroupTimeoutRef.current = setTimeout(() => {
-        logEvent("folderGroup.delete", { groupId });
-        removedFolders.forEach((f) => logEvent("folder.delete", { folderId: f.id }));
-        setPendingDeletedGroup(null);
-      }, 8000);
-
-      const panelId = `folder-group-${groupId}`;
-      dockApiRef.current?.getPanel(panelId)?.api?.close?.();
-    },
-    [folderGroups, customFolders, logEvent]
-  );
-
-  const handleUndoDeleteFolderGroup = useCallback(() => {
-    if (!pendingDeletedGroup) return;
-    clearTimeout(undoGroupTimeoutRef.current);
-    const { group, folders } = pendingDeletedGroup;
-    setFolderGroups((prev) => [...prev, group]);
-    setCustomFolders((prev) => [...prev, ...folders]);
-    setPendingDeletedGroup(null);
-    dockApiRef.current?.addPanel({
-      id: `folder-group-${group.id}`,
-      component: "folderGroup",
-      title: group.name,
-      params: { groupId: group.id },
-      position: { referencePanel: "library", direction: "left" },
-    });
-  }, [pendingDeletedGroup]);
-
-  // Every track Disc currently knows about, from the main folder and every
-  // linked custom folder, deduped by id (a track's absolute path). Used
-  // anywhere a track needs to be found regardless of which folder it's
-  // showing under — Favorites and the Details panel both need this.
-  const allTracks = useMemo(() => {
-    const map = new Map();
-    tracks.forEach((t) => map.set(t.id, t));
-    Object.values(customFolderTracks).forEach((list) => {
-      list.forEach((t) => map.set(t.id, t));
-    });
-    return Array.from(map.values());
-  }, [tracks, customFolderTracks]);
-
-  // Keep refs in sync every render so the audio element's mount-only
-  // 'ended' listener and the queue handlers always see current data.
-  playNextRef.current = handlePlayNext;
-  allTracksRef.current = allTracks;
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [togglePlayPause, seekRelative, handleToggleShuffle]);
 
   const handleTogglePin = useCallback(async () => {
     if (!window.disc) return;
-    const next = await window.disc.toggleAlwaysOnTop(!pinned);
-    setPinned(next);
+    const result = await window.disc.toggleAlwaysOnTop(!pinned);
+    setPinned(Boolean(result));
   }, [pinned]);
 
-  const handleChooseFolder = useCallback(async () => {
-    if (!window.disc) return;
-    const chosen = await window.disc.chooseMusicFolder();
-    if (chosen) {
-      setMusicFolderPath(chosen);
-      localStorage.setItem(FOLDER_STORAGE_KEY, chosen);
-    }
+  // The window-snap preview (electron/main.js) tints itself with the
+  // theme's accent — Disc Lite's is always white.
+  useEffect(() => {
+    window.disc?.setSnapAccentColor("#ffffff");
   }, []);
-
-  const handleEnterCompactMode = useCallback(() => {
-    window.disc?.enterCompactMode();
-    setCompactMode(true);
-  }, []);
-
-  const handleExitCompactMode = useCallback(() => {
-    window.disc?.exitCompactMode();
-    setCompactMode(false);
-  }, []);
-
-  // Stable references — dockview should be given the same component
-  // identity across renders, since app state now flows in via context
-  // rather than through props baked into a closure here.
-  const dockComponents = {
-    sidebar: FolderGroupPanel,
-    folderGroup: FolderGroupPanel,
-    library: LibraryPanel,
-    details: DetailsPanel,
-    collections: CollectionsPanel,
-    pomodoro: PomodoroPanel,
-    image: ImagePanel,
-  };
 
   const discContextValue = useMemo(
     () => ({
-      musicFolderPath,
-      onChooseFolder: handleChooseFolder,
-      tracks,
-      isScanning,
-      favoriteIds,
-      onToggleFavorite: handleToggleFavorite,
-      onSetFavorite: handleSetFavorite,
-      onDropFiles: handleDropFiles,
-      onBatchMove: handleBatchMove,
-      onDeleteTrack: handleDeleteTrack,
-      onDeleteTracks: handleDeleteTracks,
-      onRenameTrackFile: handleRenameTrackFile,
-      onRepairTrack: handleRepairTrack,
-      trackNotes,
-      onSetTrackNote: handleSetTrackNote,
-      trackSections,
-      onAddTrackSection: handleAddTrackSection,
-      onDeleteTrackSection: handleDeleteTrackSection,
-      healthFilter,
-      onSetHealthFilter: handleSetHealthFilter,
-      tagFilterId,
-      onSetTagFilter: handleSetTagFilter,
-      preloadState,
-      onStartPreload: handleStartPreload,
-      onCancelPreload: handleCancelPreload,
-      onResetPreload: handleResetPreload,
-      preloadConcurrency,
-      onSetPreloadConcurrency: setPreloadConcurrency,
-      collections,
-      onCreateCollection: handleCreateCollection,
-      onRenameCollection: handleRenameCollection,
-      onDeleteCollection: handleDeleteCollection,
-      onSetCollectionColor: handleSetCollectionColor,
-      onAddTracksToCollection: handleAddTracksToCollection,
-      onRemoveTrackFromCollection: handleRemoveTrackFromCollection,
-      deviceIdentity,
-      onSetDeviceName: handleSetDeviceName,
-      studioSyncEnabled,
-      onSetStudioSyncEnabled: setStudioSyncEnabled,
-      syncStatus,
-      onSyncNow: runMerge,
-      shortcuts,
-      onSetShortcut: handleSetShortcut,
-      onResetShortcuts: handleResetShortcuts,
-      appearanceSettings,
-      onSetAppearance: handleSetAppearance,
+      folders,
+      folderTracks,
+      allTracks,
       missingFolderIds,
-      compactMode,
-      onEnterCompactMode: handleEnterCompactMode,
-      onExitCompactMode: handleExitCompactMode,
-      shortcutsModalOpen,
-      onOpenShortcuts: () => setShortcutsModalOpen(true),
-      onCloseShortcuts: () => setShortcutsModalOpen(false),
       activeFolderId,
       setActiveFolderId,
-      trackOrder,
-      onReorderTracks: handleReorderTracks,
+      favoriteIds,
+      onToggleFavorite: handleToggleFavorite,
+      onAddFolders: handleAddFolders,
+      onRemoveFolder: handleRemoveFolder,
+      onRenameFolder: handleRenameFolder,
+      onDropFiles: handleDropFiles,
+      onDeleteTrack: handleDeleteTrack,
+      onRenameTrackFile: handleRenameTrackFile,
       currentTrackId,
       isPlaying,
       duration,
       togglePlayPause,
       seekTo,
-      playTrackSection,
       getCurrentTime,
-      selectedTrackId,
-      onSelectTrack: handleSelectTrack,
-      customFolders,
-      customFolderTracks,
-      onCreateFolder: handleCreateFolder,
-      onCreateFolderFromPath: handleCreateFolderFromPath,
-      onRenameFolder: handleRenameFolder,
-      onDeleteFolder: handleDeleteFolder,
-      onLinkFolderDirectory: handleLinkFolderDirectory,
-      onUnlinkFolderDirectory: handleUnlinkFolderDirectory,
-      onSetFolderColor: handleSetFolderColor,
-      onReorderFolders: handleReorderFolders,
-      onToggleSectionCollapsed: handleToggleSectionCollapsed,
-      onSortSectionAlphabetically: handleSortSectionAlphabetically,
-      folderGroups,
-      onCreateFolderGroup: handleCreateFolderGroup,
-      onScanFolder: handleScanFolder,
-      onRenameFolderGroup: handleRenameFolderGroup,
-      onDeleteFolderGroup: handleDeleteFolderGroup,
-      pendingDeletedGroup,
-      onUndoDeleteFolderGroup: handleUndoDeleteFolderGroup,
-      allTracks,
-      tags,
-      trackTags,
-      onCreateTag: handleCreateTag,
-      onDeleteTag: handleDeleteTag,
-      onRenameTag: handleRenameTag,
-      onRecolorTag: handleRecolorTag,
-      onMergeTags: handleMergeTags,
-      pendingDeletedTag,
-      onUndoDeleteTag: handleUndoDeleteTag,
-      onToggleTrackTag: handleToggleTrackTag,
-      onAssignTagToTracks: handleAssignTagToTracks,
+      volume,
+      setVolume,
       queueTrackIds,
       queueIndex,
       shuffleEnabled,
@@ -2235,104 +506,28 @@ export default function App() {
       onPlayNext: handlePlayNext,
       onPlayPrev: handlePlayPrev,
       onToggleShuffle: handleToggleShuffle,
-      waveformTick,
-      volume,
-      onVolumeChange: setVolume,
     }),
     [
-      musicFolderPath,
-      handleChooseFolder,
-      tracks,
-      isScanning,
+      folders,
+      folderTracks,
+      allTracks,
+      missingFolderIds,
+      activeFolderId,
       favoriteIds,
       handleToggleFavorite,
-      handleSetFavorite,
+      handleAddFolders,
+      handleRemoveFolder,
+      handleRenameFolder,
       handleDropFiles,
-      handleBatchMove,
       handleDeleteTrack,
-      handleDeleteTracks,
       handleRenameTrackFile,
-      handleRepairTrack,
-      trackNotes,
-      handleSetTrackNote,
-      trackSections,
-      handleAddTrackSection,
-      handleDeleteTrackSection,
-      healthFilter,
-      handleSetHealthFilter,
-      tagFilterId,
-      handleSetTagFilter,
-      preloadState,
-      handleStartPreload,
-      handleCancelPreload,
-      handleResetPreload,
-      preloadConcurrency,
-      setPreloadConcurrency,
-      collections,
-      handleCreateCollection,
-      handleRenameCollection,
-      handleDeleteCollection,
-      handleSetCollectionColor,
-      handleAddTracksToCollection,
-      handleRemoveTrackFromCollection,
-      deviceIdentity,
-      handleSetDeviceName,
-      studioSyncEnabled,
-      syncStatus,
-      runMerge,
-      shortcuts,
-      handleSetShortcut,
-      handleResetShortcuts,
-      appearanceSettings,
-      handleSetAppearance,
-      missingFolderIds,
-      compactMode,
-      handleEnterCompactMode,
-      handleExitCompactMode,
-      shortcutsModalOpen,
-      activeFolderId,
-      trackOrder,
-      handleReorderTracks,
       currentTrackId,
       isPlaying,
       duration,
       togglePlayPause,
       seekTo,
-      playTrackSection,
       getCurrentTime,
-      selectedTrackId,
-      handleSelectTrack,
-      customFolders,
-      customFolderTracks,
-      handleCreateFolder,
-      handleCreateFolderFromPath,
-      handleRenameFolder,
-      handleDeleteFolder,
-      handleLinkFolderDirectory,
-      handleUnlinkFolderDirectory,
-      handleSetFolderColor,
-      handleReorderFolders,
-      handleToggleSectionCollapsed,
-      handleSortSectionAlphabetically,
-      folderGroups,
-      handleCreateFolderGroup,
-      handleScanFolder,
-      handleRenameFolderGroup,
-      handleDeleteFolderGroup,
-      pendingDeletedGroup,
-      handleUndoDeleteFolderGroup,
-      allTracks,
-      tags,
-      trackTags,
-      handleCreateTag,
-      handleDeleteTag,
-      handleRenameTag,
-      handleRecolorTag,
-      handleMergeTags,
-      pendingDeletedTag,
-      handleUndoDeleteTag,
-      handleToggleTrackTag,
-      handleAssignTagToTracks,
+      volume,
       queueTrackIds,
       queueIndex,
       shuffleEnabled,
@@ -2340,739 +535,21 @@ export default function App() {
       handlePlayNext,
       handlePlayPrev,
       handleToggleShuffle,
-      waveformTick,
-      volume,
-      setVolume,
     ]
   );
 
-  // Tracks which panels are actually open right now, so the Windows menu
-  // (see WindowsMenu.jsx) can show a checkmark next to open ones and
-  // reopen closed ones — kept in sync with dockview's real panel list via
-  // its layout-change event, rather than tracked manually every place a
-  // panel might get added/removed.
-  const [openPanelIds, setOpenPanelIds] = useState(() => new Set());
-
-  // The panel arrangement as it is right now, for saving into a profile
-  // (see collectProfileData) — dockview's own api.toJSON(), or null if the
-  // dock isn't up yet.
-  const getLiveLayout = useCallback(() => {
-    try {
-      return dockApiRef.current?.toJSON() ?? null;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const onDockviewReady = useCallback((event) => {
-    const api = event.api;
-    dockApiRef.current = api;
-
-    function syncOpenPanels() {
-      setOpenPanelIds(new Set(api.panels.map((p) => p.id)));
-    }
-    api.onDidLayoutChange(syncOpenPanels);
-
-    // Bouncy animations (see appearance/bouncy.css): when a drag-to-move
-    // finishes, every group whose position or size actually changed
-    // (the one the panel landed in, and any others the grid reflowed to
-    // make room) slides from where it used to be to where it ended up,
-    // instead of just snapping. This is a small FLIP (First-Last-Invert-
-    // Play): onWillDrop fires right before dockview mutates anything, so
-    // that's the "First" measurement; onDidMovePanel fires right after,
-    // once the DOM already reflects the new layout, for "Last". Only
-    // `transform` is ever touched — dockview's own layout math decides
-    // real position/size as always, this just visually eases into it —
-    // so it can't desync from or fight the real layout.
-    //
-    // A group mid-slide from a *previous* move still has a live transform
-    // on it when getBoundingClientRect() runs — transform affects the
-    // rect a browser reports, so measuring through one gives a position
-    // that's neither the real old spot nor the real new one. That
-    // mismatch is what produced the occasional glitchy "readjust" look:
-    // the next slide would invert from a contaminated reading. Settling
-    // any in-flight transform to its resting value right before every
-    // measurement (both "First" and "Last") keeps every measurement
-    // reading dockview's real, untransformed layout.
-    function settleTransform(el) {
-      if (el.style.transform) {
-        el.style.transition = "none";
-        el.style.transform = "";
-        void el.offsetWidth;
-      }
-    }
-    function snapshotGroupRects() {
-      const rects = new Map();
-      for (const group of api.groups) {
-        if (!group.element) continue;
-        settleTransform(group.element);
-        rects.set(group.element, group.element.getBoundingClientRect());
-      }
-      groupRectsBeforeMoveRef.current = rects;
-    }
-    function slideElement(el, dx, dy) {
-      // Reserve scrollbar-gutter space on this group's own scrollable
-      // panels only while it's actually sliding — a panel resizing
-      // mid-drag can briefly have scrollHeight > clientHeight before its
-      // virtualized rows catch up, popping a scrollbar in and shifting
-      // content left, then back out. Reserving the gutter the rest of the
-      // time instead (permanently) left a visible empty strip along every
-      // scrollable panel at all times, which looked worse than the
-      // glitch — so this is scoped to just the slide's duration.
-      const scrollables = el.querySelectorAll(
-        ".library-panel__body, .sidebar__list-area, .collections-panel__list-area, .details-panel, .pomodoro-panel"
-      );
-      scrollables.forEach((sc) => sc.classList.add("disc-scrollbar-reserve"));
-      el.style.transition = "none";
-      el.style.transform = `translate(${dx}px, ${dy}px)`;
-      void el.offsetWidth; // force the inverted position to paint before easing out of it
-      el.style.transition = "transform 0.32s cubic-bezier(0.3, 1.18, 0.64, 1)";
-      el.style.transform = "";
-      el.addEventListener(
-        "transitionend",
-        () => {
-          scrollables.forEach((sc) => sc.classList.remove("disc-scrollbar-reserve"));
-          // A no-op if a later move has already reset this inline style
-          // (settleTransform above), so this can't clobber a newer,
-          // still-running slide.
-          if (el.style.transform === "") el.style.transition = "";
-        },
-        { once: true }
-      );
-    }
-    // Landed as a new tab in a group that didn't need to move or resize
-    // (dropping onto an existing group's tab strip, or any other drop
-    // where every group's rect comes out unchanged) — nothing above has
-    // anything to slide, which is why those drops looked like they had no
-    // animation at all. Give the panel's own content a quick settle-in
-    // instead, so a drop always plays *something*.
-    function playPanelLandedPop(panel) {
-      const el = panel?.view?.content?.element;
-      if (!el) return;
-      el.style.transition = "none";
-      el.style.opacity = "0.4";
-      el.style.transform = "scale(0.985)";
-      void el.offsetWidth;
-      el.style.transition =
-        "transform 0.22s cubic-bezier(0.3, 1.18, 0.64, 1), opacity 0.16s ease-out";
-      el.style.opacity = "";
-      el.style.transform = "";
-      el.addEventListener(
-        "transitionend",
-        () => {
-          if (el.style.transform === "") el.style.transition = "";
-        },
-        { once: true }
-      );
-    }
-    function playGroupSlide(event) {
-      const root = document.documentElement;
-      if (root.getAttribute("data-bouncy") !== "on") return;
-      if (root.getAttribute("data-reduce-motion") === "on") return;
-      const before = groupRectsBeforeMoveRef.current;
-      let slidAny = false;
-      for (const group of api.groups) {
-        const el = group.element;
-        const prev = el && before.get(el);
-        if (!prev) continue;
-        settleTransform(el);
-        const next = el.getBoundingClientRect();
-        const dx = prev.left - next.left;
-        const dy = prev.top - next.top;
-        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
-        slideElement(el, dx, dy);
-        slidAny = true;
-      }
-      if (!slidAny) playPanelLandedPop(event?.panel);
-    }
-    api.onWillDrop(snapshotGroupRects);
-    api.onDidMovePanel((event) => playGroupSlide(event));
-
-    const existingPresets = loadLayoutPresets();
-    const savedDefaultName = loadDefaultLayoutName();
-    const defaultLayoutJson =
-      savedDefaultName && existingPresets[savedDefaultName]
-        ? existingPresets[savedDefaultName]
-        : null;
-
-    let recoveredFromBrokenLayout = false;
-
-    if (defaultLayoutJson) {
-      // A default layout was explicitly set — restore it instead of the
-      // hardcoded first-launch arrangement below.
-      try {
-        api.fromJSON(defaultLayoutJson);
-        syncOpenPanels();
-        return;
-      } catch (err) {
-        console.error("Failed to restore saved layout, falling back to default:", err);
-        recoveredFromBrokenLayout = true;
-        // fromJSON can partially succeed before throwing partway through
-        // (e.g. a saved layout referencing a panel shape from an older
-        // version of Disc) — leaving some panels already created. Clear
-        // everything first so the fallback below doesn't try to create a
-        // panel id that already exists, which would throw again — this
-        // time uncaught, since it'd be outside this try/catch.
-        try {
-          [...api.panels].forEach((p) => p.api.close());
-        } catch (cleanupErr) {
-          console.error("Couldn't fully clean up after a failed layout restore:", cleanupErr);
-        }
-      }
-    }
-
-    // Defensively wrapped — this is the fallback path itself, so if
-    // *this* somehow throws too (a future incompatibility, corrupted
-    // folderGroups data, etc.), the rest of the app still comes up rather
-    // than leaving a fully blank window with no way to recover.
-    try {
-      const primaryGroup = folderGroups.find((g) => g.id === "primary") || {
-        id: "primary",
-        name: "Sounds",
-      };
-
-      // Four columns: Folders | Collections over Sound Effects | Library |
-      // Details over Pomodoro. Fresh installs only have the primary group,
-      // so a second, empty "Sound Effects" group is created for the
-      // second column; anyone who already has extra groups (but no saved
-      // layout) gets those in that slot instead.
-      const isFreshInstall = Object.keys(existingPresets).length === 0;
-      let extraGroups = folderGroups.filter((g) => g.id !== "primary");
-      if (isFreshInstall && extraGroups.length === 0) {
-        const soundEffects = { id: "sound-effects", name: "Sound Effects", deletable: true };
-        setFolderGroups((prev) =>
-          prev.some((g) => g.id === soundEffects.id) ? prev : [...prev, soundEffects]
-        );
-        extraGroups = [soundEffects];
-      }
-
-      // Built as explicit serialized JSON rather than by calling addPanel
-      // and then resizing: sizing after the fact (setSize, initialWidth)
-      // turned out to be unreliable — dockview rescales the grid during
-      // its first layout pass, which left the Details column squeezed to
-      // its minimum width and the columns otherwise equal. Handing it
-      // finished sizes up front has no ordering/timing to get wrong.
-      // The Library takes whatever width is left over.
-      const gridWidth = api.width || 1600;
-      const gridHeight = api.height || 900;
-      const SIDE_W = 230;
-      const DETAILS_W = 340;
-      const COLLECTIONS_H = 190;
-      const POMODORO_H = 325;
-      const sfIds = extraGroups.map((g) => `folder-group-${g.id}`);
-      const panels = {
-        sidebar: {
-          id: "sidebar",
-          contentComponent: "folderGroup",
-          params: { groupId: "primary" },
-          title: "Folders",
-        },
-        collections: { id: "collections", contentComponent: "collections", title: "Collections" },
-        library: { id: "library", contentComponent: "library", title: "Library" },
-        details: { id: "details", contentComponent: "details", title: "Details" },
-        pomodoro: { id: "pomodoro", contentComponent: "pomodoro", title: "Pomodoro Timer" },
-      };
-      extraGroups.forEach((g) => {
-        panels[`folder-group-${g.id}`] = {
-          id: `folder-group-${g.id}`,
-          contentComponent: "folderGroup",
-          params: { groupId: g.id },
-          title: g.name,
-        };
-      });
-      const leaf = (id, views, size) => ({
-        type: "leaf",
-        data: { views, activeView: views[0], id },
-        size,
-      });
-      const middleColumn =
-        sfIds.length > 0
-          ? {
-              type: "branch",
-              data: [
-                leaf("5", ["collections"], COLLECTIONS_H),
-                leaf("6", sfIds, gridHeight - COLLECTIONS_H),
-              ],
-              size: SIDE_W,
-            }
-          : leaf("5", ["collections"], SIDE_W);
-      const defaultLayout = {
-        grid: {
-          root: {
-            type: "branch",
-            data: [
-              leaf("2", ["sidebar"], SIDE_W),
-              middleColumn,
-              leaf("1", ["library"], gridWidth - SIDE_W * 2 - DETAILS_W),
-              {
-                type: "branch",
-                data: [
-                  leaf("3", ["details"], gridHeight - POMODORO_H),
-                  leaf("4", ["pomodoro"], POMODORO_H),
-                ],
-                size: DETAILS_W,
-              },
-            ],
-            size: gridHeight,
-          },
-          width: gridWidth,
-          height: gridHeight,
-          orientation: "HORIZONTAL",
-        },
-        panels,
-        activeGroup: "1",
-      };
-      try {
-        api.fromJSON(defaultLayout);
-      } catch (layoutErr) {
-        // Should never happen, but a blank window with no way to recover
-        // is far worse than an unstyled layout — fall back to plain
-        // addPanel calls for the three essential panels.
-        console.error("Default layout JSON failed, using minimal fallback:", layoutErr);
-        [...api.panels].forEach((p) => p.api.close());
-        api.addPanel({
-          id: "sidebar",
-          component: "folderGroup",
-          title: "Folders",
-          params: { groupId: "primary" },
-        });
-        api.addPanel({
-          id: "library",
-          component: "library",
-          title: "Library",
-          position: { referencePanel: "sidebar", direction: "right" },
-        });
-        api.addPanel({
-          id: "details",
-          component: "details",
-          title: "Details",
-          position: { referencePanel: "library", direction: "right" },
-        });
-      }
-
-      // First-ever launch (or recovering from a saved layout that no
-      // longer restores cleanly): capture this as the "Default" layout
-      // preset so there's always something to fall back to, and mark it
-      // as the layout that auto-loads. Without the recoveredFromBrokenLayout
-      // check here, a broken saved layout would silently repeat this exact
-      // same failed-restore-then-fallback cycle on every single future
-      // launch, since a "Default" entry already existing (even a broken
-      // one) would otherwise skip this self-healing step entirely.
-      if (Object.keys(existingPresets).length === 0 || recoveredFromBrokenLayout) {
-        existingPresets.Default = api.toJSON();
-        saveLayoutPresets(existingPresets);
-        setLayoutPresetNames(Object.keys(existingPresets));
-        saveDefaultLayoutName("Default");
-        setDefaultLayoutName("Default");
-      }
-    } catch (err) {
-      console.error("Failed to set up the default panel layout:", err);
-    }
-
-    syncOpenPanels();
-    // Empty deps is intentional: dockview's onReady fires exactly once,
-    // when the dockview instance first initializes — it isn't
-    // re-subscribed on every render the way a normal prop callback would
-    // be. This closure correctly captures folderGroups (and everything
-    // else it references) as of that one mount-time call, which is
-    // exactly the value already loaded from localStorage by then. Adding
-    // folderGroups here to satisfy an exhaustive-deps lint rule would
-    // change this callback's identity on every folder-group change,
-    // which — if dockview ever treated a changed onReady as "call it
-    // again" — would be worse: the entire panel-setup/restore logic
-    // re-running on every folder edit, not just once at startup.
-  }, []);
-
-  const handleSaveLayout = useCallback((name) => {
-    if (!dockApiRef.current) return;
-    const presets = loadLayoutPresets();
-    presets[name] = dockApiRef.current.toJSON();
-    saveLayoutPresets(presets);
-    setLayoutPresetNames(Object.keys(presets));
-  }, []);
-
-  const handleLoadLayout = useCallback(
-    (name) => {
-      const api = dockApiRef.current;
-      if (!api) return;
-      const presets = loadLayoutPresets();
-      if (!presets[name]) return;
-      try {
-        api.fromJSON(presets[name]);
-      } catch (err) {
-        console.error(`Failed to load layout "${name}" — it may be from an older version:`, err);
-        try {
-          [...api.panels].forEach((p) => p.api.close());
-          // Rebuild a minimal working layout rather than leaving an empty
-          // workspace — same core panels a fresh install starts with.
-          const primaryGroup = folderGroups.find((g) => g.id === "primary") || {
-            id: "primary",
-            name: "Sounds",
-          };
-          api.addPanel({
-            id: "sidebar",
-            component: "folderGroup",
-            title: primaryGroup.name,
-            params: { groupId: "primary" },
-          });
-          api.addPanel({
-            id: "library",
-            component: "library",
-            title: "Library",
-            position: { referencePanel: "sidebar", direction: "right" },
-          });
-          api.addPanel({
-            id: "details",
-            component: "details",
-            title: "Details",
-            position: { referencePanel: "library", direction: "right" },
-          });
-        } catch (cleanupErr) {
-          console.error("Couldn't fully recover after a failed layout load:", cleanupErr);
-        }
-      }
-    },
-    [folderGroups]
-  );
-
-  // Every panel Disc knows how to create, whether or not it's currently
-  // open — used by the Windows menu to show a checkmark for open ones and
-  // reconstruct closed ones on demand (closing a panel via its own × was
-  // otherwise a dead end short of reloading an entire saved layout).
-  const knownPanels = useMemo(() => {
-    const primaryGroup = folderGroups.find((g) => g.id === "primary");
-    return [
-      { id: "library", title: "Library", component: "library" },
-      { id: "details", title: "Details", component: "details" },
-      { id: "collections", title: "Collections", component: "collections" },
-      {
-        id: "sidebar",
-        title: primaryGroup?.name || "Sounds",
-        component: "folderGroup",
-        params: { groupId: "primary" },
-      },
-      ...folderGroups
-        .filter((g) => g.id !== "primary")
-        .map((g) => ({
-          id: `folder-group-${g.id}`,
-          title: g.name,
-          component: "folderGroup",
-          params: { groupId: g.id },
-        })),
-      { id: "pomodoro", title: "Pomodoro Timer", component: "pomodoro" },
-      { id: "image", title: "Image", component: "image" },
-    ];
-  }, [folderGroups]);
-
-  // Where a panel goes when it's brought back from the Panels menu, based
-  // on the default layout (Folders | Collections over Sound Effects |
-  // Library | Details over Pomodoro) rather than dockview's own fallback of
-  // stacking it wherever the active group happens to be — which, for a
-  // panel that used to live on the far right, meant piling it up on top of
-  // whatever was active on the left. Each rule anchors to the panels that
-  // are actually open right now and degrades gracefully when they're not:
-  // no direction-with-no-reference means "full-height column at the very
-  // edge of the window", which is the right spot for the side columns.
-  function defaultPanelPlacement(api, panelId) {
-    const open = (id) => (api.getPanel(id) ? id : null);
-    const groupIds = api.panels
-      .map((p) => p.id)
-      .filter((id) => id.startsWith("folder-group-"));
-    const first = (...ids) => ids.find(Boolean) || null;
-    const anyOpen = api.panels.length > 0;
-    if (!anyOpen) return {}; // nothing to anchor to — let dockview place it
-
-    const pos = (referencePanel, direction) =>
-      referencePanel ? { position: { referencePanel, direction } } : null;
-    const edge = (direction) => ({ position: { direction } });
-
-    switch (panelId) {
-      case "sidebar": // Folders: far left column
-        return { ...edge("left"), initialWidth: 230 };
-      case "collections": {
-        // Above the Sound Effects-style group if there is one, else right
-        // of Folders, else left of the Library.
-        const anchor = pos(first(groupIds[0]), "above");
-        if (anchor) return anchor;
-        const beside = pos(open("sidebar"), "right") || pos(open("library"), "left");
-        return { ...(beside || edge("left")), initialWidth: 230 };
-      }
-      case "library": {
-        const leftCol = first(open("collections"), groupIds[0], open("sidebar"));
-        const placed = pos(leftCol, "right") || pos(first(open("details"), open("image"), open("pomodoro")), "left");
-        return placed || {};
-      }
-      case "details": {
-        // Details heads the right-hand column, so if Image/Pomodoro are
-        // already there it goes above them rather than opening a second
-        // column beside the Library.
-        const placed = pos(first(open("image"), open("pomodoro")), "above") || pos(open("library"), "right");
-        return { ...(placed || edge("right")), initialWidth: 340 };
-      }
-      case "pomodoro": {
-        const placed = pos(first(open("image"), open("details")), "below") || pos(open("library"), "right");
-        return { ...(placed || edge("right")), initialHeight: 325, initialWidth: 340 };
-      }
-      case "image": {
-        const placed = pos(open("details"), "below") || pos(open("pomodoro"), "above") || pos(open("library"), "right");
-        return { ...(placed || edge("right")), initialHeight: 240, initialWidth: 340 };
-      }
-      default: {
-        // A folder group (Sound Effects, etc.): under Collections, else
-        // beside Folders, else left of the Library.
-        const placed =
-          pos(open("collections"), "below") ||
-          pos(groupIds.find((id) => id !== panelId), "within") ||
-          pos(open("sidebar"), "right") ||
-          pos(open("library"), "left");
-        return { ...(placed || edge("left")), initialWidth: 230 };
-      }
-    }
-  }
-
-  const handleTogglePanel = useCallback(
-    (panelId) => {
-      const api = dockApiRef.current;
-      if (!api) return;
-      const existing = api.getPanel(panelId);
-      if (existing) {
-        existing.api.close();
-        return;
-      }
-      const known = knownPanels.find((p) => p.id === panelId);
-      if (!known) return;
-      let placement = {};
-      try {
-        placement = defaultPanelPlacement(api, known.id);
-      } catch (err) {
-        console.error("Couldn't work out where to put the panel, using dockview's default:", err);
-      }
-      api.addPanel({
-        id: known.id,
-        component: known.component,
-        title: known.title,
-        params: known.params,
-        ...placement,
-      });
-      // Adding a column makes dockview redistribute the whole row's widths
-      // (the Library can end up as narrow as the sidebars), so put the side
-      // columns back at their normal widths — the Library takes the rest.
-      // Left to right, side columns only: shrinking a left column hands its
-      // spare width to the columns after it, and the right-hand column
-      // being set last is what hands the remainder back to the Library.
-      // (A timer rather than requestAnimationFrame — rAF doesn't fire while
-      // the window is hidden or occluded, which would skip this entirely.)
-      setTimeout(() => {
-        try {
-          const widths = { sidebar: 230, collections: 230, details: 340, pomodoro: 340, image: 340 };
-          const left = (p) => p.group?.element?.getBoundingClientRect().left ?? 0;
-          [...api.panels]
-            .sort((a, b) => left(a) - left(b))
-            .forEach((p) => {
-              const w = p.id.startsWith("folder-group-") ? 230 : widths[p.id];
-              if (w) p.api.setSize({ width: w });
-            });
-          // Same idea for heights, bottom to top (each one takes its space from
-          // the panel above it, so the lower ones must be set first), so Pomodoro isn't left
-          // squeezed and Collections isn't stretched to half a column.
-          const heights = { collections: 190, image: 240, pomodoro: 325 };
-          const top = (p) => p.group?.element?.getBoundingClientRect().top ?? 0;
-          [...api.panels]
-            .sort((a, b) => top(b) - top(a))
-            .forEach((p) => {
-              if (heights[p.id]) p.api.setSize({ height: heights[p.id] });
-            });
-        } catch (err) {
-          console.error("Couldn't re-apply panel widths:", err);
-        }
-      }, 60);
-    },
-    [knownPanels]
-  );
-
-  const handleDeleteLayout = useCallback((name) => {
-    const presets = loadLayoutPresets();
-    delete presets[name];
-    saveLayoutPresets(presets);
-    setLayoutPresetNames(Object.keys(presets));
-    // If the deleted preset was the default, there's nothing sensible left
-    // to fall back to — clear it so startup uses the hardcoded layout
-    // instead of silently pointing at a preset that no longer exists.
-    setDefaultLayoutName((current) => {
-      if (current !== name) return current;
-      saveDefaultLayoutName(null);
-      return null;
-    });
-  }, []);
-
-  const handleSetDefaultLayout = useCallback((name) => {
-    saveDefaultLayoutName(name);
-    setDefaultLayoutName(name);
-  }, []);
-
-  // Layout presets are stored keyed by their own name (there's no
-  // separate id), so renaming one is a genuine rekey — move the saved
-  // JSON to the new key and drop the old one. Refuses (rather than
-  // silently overwriting) if something's already saved under the new
-  // name, since that would destroy a different preset without asking.
-  const handleRenameLayout = useCallback(
-    (oldName, newName) => {
-      const trimmed = newName.trim();
-      if (!trimmed || trimmed === oldName) return;
-      const presets = loadLayoutPresets();
-      if (!(oldName in presets) || trimmed in presets) return;
-
-      const json = presets[oldName];
-      delete presets[oldName];
-      presets[trimmed] = json;
-      saveLayoutPresets(presets);
-      setLayoutPresetNames(Object.keys(presets));
-
-      if (defaultLayoutName === oldName) {
-        saveDefaultLayoutName(trimmed);
-        setDefaultLayoutName(trimmed);
-      }
-    },
-    [defaultLayoutName]
-  );
-
   return (
-    <PomodoroProvider>
+    <DiscContext.Provider value={discContextValue}>
       <div className="app">
-        {!compactMode && (
-          <TitleBar
-          theme={theme}
-          onThemeChange={setTheme}
-          pinned={pinned}
-          onTogglePin={handleTogglePin}
-          layoutPresetNames={layoutPresetNames}
-          onSaveLayout={handleSaveLayout}
-          onLoadLayout={handleLoadLayout}
-          onDeleteLayout={handleDeleteLayout}
-          onRenameLayout={handleRenameLayout}
-          defaultLayoutName={defaultLayoutName}
-          onSetDefaultLayout={handleSetDefaultLayout}
-          volume={volume}
-          onVolumeChange={setVolume}
-          onThemePreviewCancel={() => applyThemeById(theme)}
-          onToggleCompactMode={handleEnterCompactMode}
-          onOpenShortcuts={() => setShortcutsModalOpen(true)}
-          onOpenSettings={() => setSettingsModalOpen(true)}
-          onOpenHealth={() => setHealthModalOpen(true)}
-          onOpenConvert={() => setConvertModalOpen(true)}
-          onOpenTagManager={() => setTagManagerModalOpen(true)}
-          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-          preloadState={preloadState}
-          knownPanels={knownPanels}
-          openPanelIds={openPanelIds}
-          onTogglePanel={handleTogglePanel}
-          appearanceSettings={appearanceSettings}
-          onSetAppearance={handleSetAppearance}
-          musicFolderPath={musicFolderPath}
-          allTracks={allTracks}
-          customFolders={customFolders}
-          getLiveLayout={getLiveLayout}
-        />
-      )}
-      <div className="app__dock">
-        <DiscContext.Provider value={discContextValue}>
-          {compactMode ? (
-            <CompactView />
-          ) : (
-            <DockviewReact
-              components={dockComponents}
-              onReady={onDockviewReady}
-              className="dockview-theme-disc"
-            />
-          )}
-          {shortcutsModalOpen && (
-            <ShortcutsModal onClose={() => setShortcutsModalOpen(false)} />
-          )}
-          {settingsModalOpen && (
-            <SettingsModal onClose={() => setSettingsModalOpen(false)} />
-          )}
-          {healthModalOpen && (
-            <LibraryHealthModal onClose={() => setHealthModalOpen(false)} />
-          )}
-          {convertModalOpen && (
-            <ConvertModal onClose={() => setConvertModalOpen(false)} />
-          )}
-          {tagManagerModalOpen && (
-            <TagManagerModal onClose={() => setTagManagerModalOpen(false)} />
-          )}
-          {pendingOggLink && (
-            <OggLinkPromptModal
-              pendingOggLink={pendingOggLink}
-              onConvertAndLink={handleConvertAndLink}
-              onLinkWithoutConverting={handleLinkWithoutConverting}
-              onCancelOggLinkPrompt={handleCancelOggLinkPrompt}
-              onUnlinkPendingOggFolder={handleUnlinkPendingOggFolder}
-            />
-          )}
-          {commandPaletteOpen && (
-            <CommandPalette
-              onClose={() => setCommandPaletteOpen(false)}
-              pinned={pinned}
-              onTogglePin={handleTogglePin}
-              onOpenSettings={() => setSettingsModalOpen(true)}
-              onOpenShortcuts={() => setShortcutsModalOpen(true)}
-              onOpenHealth={() => setHealthModalOpen(true)}
-              onOpenTagManager={() => setTagManagerModalOpen(true)}
-              onToggleCompactMode={compactMode ? handleExitCompactMode : handleEnterCompactMode}
-            />
-          )}
-          {pendingDeletedGroup && (
-            <div className="undo-toast">
-              <span>
-                Deleted "{pendingDeletedGroup.group.name}" (
-                {pendingDeletedGroup.folders.length} folder
-                {pendingDeletedGroup.folders.length === 1 ? "" : "s"})
-              </span>
-              <button className="undo-toast__button" onClick={handleUndoDeleteFolderGroup}>
-                Undo
-              </button>
-            </div>
-          )}
-          {pendingDeletedTag && (
-            <div className="undo-toast">
-              <span>Deleted tag "{pendingDeletedTag.tag.name}"</span>
-              <button className="undo-toast__button" onClick={handleUndoDeleteTag}>
-                Undo
-              </button>
-            </div>
-          )}
-          <UpdateToast />
-          {showSavedToast && (
-            <div className="undo-toast">
-              <span>Saved</span>
-            </div>
-          )}
-          {repairConfirm && (
-            <ConfirmModal
-              title="Repair Track?"
-              message={`This file is named .mp3, but its actual content is ${
-                REPAIR_FORMAT_LABELS[repairConfirm.diagnosis.actualFormat] ||
-                "not a valid MP3"
-              }. Repairing re-encodes it as a genuine 192kbps MP3 in place — every tag, collection, and note stays attached. The original is backed up alongside it first.`}
-              confirmLabel="Repair"
-              danger={false}
-              onConfirm={handleConfirmRepair}
-              onCancel={() => setRepairConfirm(null)}
-            />
-          )}
-          {repairProgress && (
-            <div className="undo-toast">
-              <span>Repairing… {Math.round(repairProgress.fraction * 100)}%</span>
-            </div>
-          )}
-          {toastMessage && (
-            <div className="undo-toast">
-              <span>{toastMessage}</span>
-            </div>
-          )}
-        </DiscContext.Provider>
+        <TitleBar pinned={pinned} onTogglePin={handleTogglePin} />
+        <div className="app__body">
+          <Sidebar />
+          <main className="app__main">
+            <LibraryPanel />
+          </main>
+        </div>
+        <NowPlayingBar />
       </div>
-    </div>
-    </PomodoroProvider>
+    </DiscContext.Provider>
   );
 }
